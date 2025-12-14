@@ -206,12 +206,17 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                     LOG_WARN("End of chain matches!");
                 } else
                     ("End of chain does not match!");
+            } else {
+                LOG_WARN("No Messages on this chain, request!");
+                requestNextMessage(last_message_chain_hash, last_message_chain_hash);
             }
 
             // compare to chain tip in incoming message
 
             // if not found, request the next message
         }
+    } else if (t->sfpp_message_type == meshtastic_StoreForwardPlusPlus_SFPP_message_type_LINK_REQUEST) {
+        LOG_WARN("Received link request");
     }
 
     return true;
@@ -425,6 +430,31 @@ bool StoreForwardPlusPlusModule::getChainEnd(ChannelHash _ch_hash, uint8_t *_cha
     memcpy(_chain_hash, last_message_chain_hash, 32);
     memcpy(_message_hash, last_message_hash, 32);
     return true;
+}
+
+void StoreForwardPlusPlusModule::requestNextMessage(uint8_t *_root_hash, uint8_t *_chain_hash)
+{
+
+    meshtastic_StoreForwardPlusPlus storeforward = meshtastic_StoreForwardPlusPlus_init_zero;
+    storeforward.sfpp_message_type = meshtastic_StoreForwardPlusPlus_SFPP_message_type_LINK_REQUEST;
+    // set root hash
+
+    // set chain hash
+    storeforward.chain_hash.size = 32;
+    memcpy(storeforward.chain_hash.bytes, _chain_hash, 32);
+
+    // set root hash
+    storeforward.root_hash.size = 32;
+    memcpy(storeforward.root_hash.bytes, _root_hash, 32);
+
+    // storeforward.
+    meshtastic_MeshPacket *p = allocDataProtobuf(storeforward);
+    p->to = NODENUM_BROADCAST;
+    p->decoded.want_response = false;
+    p->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
+    p->channel = 0;
+    LOG_INFO("Send packet to mesh");
+    service->sendToMesh(p, RX_SRC_LOCAL, true);
 }
 
 // announce latest hash

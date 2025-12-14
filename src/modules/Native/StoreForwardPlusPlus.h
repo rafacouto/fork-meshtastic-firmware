@@ -57,6 +57,8 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
     // return indicates message found
     bool getChainEnd(ChannelHash, uint8_t *, uint8_t *);
 
+    void requestNextMessage(uint8_t *, uint8_t *);
+
     enum chain_types {
         channel_chain = 0,
     };
