@@ -1,4 +1,5 @@
 #pragma once
+#include "Channels.h"
 #include "ProtobufModule.h"
 #include "Router.h"
 #include "SinglePortModule.h"
@@ -44,4 +45,19 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
   private:
     sqlite3 *ppDb;
     sqlite3_stmt *stmt;
+
+    // returns wasfound
+    bool getRootFromChannelHash(ChannelHash, uint8_t *);
+
+    // returns isnew
+    bool getOrAddRootFromChannelHash(ChannelHash, uint8_t *);
+
+    bool addRootToMappings(ChannelHash, uint8_t *);
+
+    // return indicates message found
+    bool getChainEnd(ChannelHash, uint8_t *, uint8_t *);
+
+    enum chain_types {
+        channel_chain = 0,
+    };
 };
