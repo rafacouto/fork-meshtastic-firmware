@@ -181,12 +181,12 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
         if (portduino_config.sfpp_stratum0) {
             LOG_WARN("Received a CANON_ANNOUNCE while stratum 0");
         } else {
-            uint8_t tmp_hash_bytes[32] = {0};
+            uint8_t tmp_root_hash_bytes[32] = {0};
 
             LOG_WARN("Received a CANON_ANNOUNCE");
-            if (getRootFromChannelHash(router->p_encrypted->channel, tmp_hash_bytes)) {
+            if (getRootFromChannelHash(router->p_encrypted->channel, tmp_root_hash_bytes)) {
                 // we found the hash, check if it's the right one
-                if (memcmp(tmp_hash_bytes, t->root_hash.bytes, 32) != 0) {
+                if (memcmp(tmp_root_hash_bytes, t->root_hash.bytes, 32) != 0) {
                     LOG_WARN("Found root hash, and it doesn't match!");
                     return true;
                 }
@@ -208,7 +208,7 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                     ("End of chain does not match!");
             } else {
                 LOG_WARN("No Messages on this chain, request!");
-                requestNextMessage(last_message_chain_hash, last_message_chain_hash);
+                requestNextMessage(t->root_hash.bytes, t->root_hash.bytes);
             }
 
             // compare to chain tip in incoming message
