@@ -115,7 +115,7 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
 
     std::string insert_statement = "INSERT INTO channel_messages (destination, sender, packet_id, want_ack, channel_hash, \
         encrypted_bytes, message_hash, rx_time, commit_hash, payload) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
-    sqlite3_prepare(ppDb, insert_statement.c_str(), insert_statement.length(), &stmt, NULL);
+    sqlite3_prepare_v2(ppDb, insert_statement.c_str(), insert_statement.length(), &stmt, NULL);
 
     encryptedOk = true;
 
@@ -259,7 +259,7 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
         std::string getEntry_string =
             "select commit_hash from channel_messages where channel_hash=? order by rowid desc LIMIT 1;";
         sqlite3_stmt *getEntry;
-        int rc = sqlite3_prepare(ppDb, getEntry_string.c_str(), getEntry_string.size(), &getEntry, NULL);
+        int rc = sqlite3_prepare_v2(ppDb, getEntry_string.c_str(), getEntry_string.size(), &getEntry, NULL);
         sqlite3_bind_int(getEntry, 1, router->p_encrypted->channel);
         sqlite3_step(getEntry);
 
@@ -340,7 +340,7 @@ bool StoreForwardPlusPlusModule::getRootFromChannelHash(ChannelHash _ch_hash, ui
 {
     bool found = false;
     sqlite3_stmt *getHash;
-    int rc = sqlite3_prepare(ppDb, "select root_hash from mappings where identifier=?;", -1, &getHash, NULL);
+    int rc = sqlite3_prepare_v2(ppDb, "select root_hash from mappings where identifier=?;", -1, &getHash, NULL);
     sqlite3_bind_int(getHash, 1, _ch_hash);
     sqlite3_step(getHash);
     uint8_t *tmp_root_hash = (uint8_t *)sqlite3_column_blob(getHash, 0);
@@ -379,11 +379,14 @@ bool StoreForwardPlusPlusModule::getOrAddRootFromChannelHash(ChannelHash _ch_has
 
 bool StoreForwardPlusPlusModule::addRootToMappings(ChannelHash _ch_hash, uint8_t *_root_hash)
 {
+    LOG_WARN("addRootToMappings()");
+    printBytes("_root_hash", _root_hash, 32);
     sqlite3_stmt *getHash;
 
     // write to the table
     auto rc =
-        sqlite3_prepare(ppDb, "INSERT INTO mappings (chain_type, identifier, root_hash) VALUES(?, ?, ?);", -1, &getHash, NULL);
+        sqlite3_prepare_v2(ppDb, "INSERT INTO mappings (chain_type, identifier, root_hash) VALUES(?, ?, ?);", -1, &getHash, NULL);
+    LOG_WARN("%d", rc);
     sqlite3_bind_int(getHash, 1, chain_types::channel_chain);
     sqlite3_bind_int(getHash, 2, _ch_hash);
     sqlite3_bind_blob(getHash, 3, _root_hash, 32, NULL);
@@ -398,7 +401,7 @@ bool StoreForwardPlusPlusModule::getChainEnd(ChannelHash _ch_hash, uint8_t *_cha
     std::string getEntry_string =
         "select commit_hash, message_hash from channel_messages where channel_hash=? order by rowid desc LIMIT 1;";
     sqlite3_stmt *getEntry;
-    int rc = sqlite3_prepare(ppDb, getEntry_string.c_str(), getEntry_string.size(), &getEntry, NULL);
+    int rc = sqlite3_prepare_v2(ppDb, getEntry_string.c_str(), getEntry_string.size(), &getEntry, NULL);
     sqlite3_bind_int(getEntry, 1, _ch_hash);
     sqlite3_step(getEntry);
     uint8_t *last_message_chain_hash = (uint8_t *)sqlite3_column_blob(getEntry, 0);
