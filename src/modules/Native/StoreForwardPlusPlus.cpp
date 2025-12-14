@@ -42,8 +42,8 @@
 #include "meshUtils.h"
 
 StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
-    : ProtobufModule("StoreForward++", meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP, &meshtastic_StoreForwardPlusPlus_msg),
-      concurrency::OSThread("StoreForward++")
+    : ProtobufModule("StoreForwardpp", meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP, &meshtastic_StoreForwardPlusPlus_msg),
+      concurrency::OSThread("StoreForwardpp")
 {
     LOG_WARN("StoreForwardPlusPlusModule init");
     if (portduino_config.sfpp_stratum0)
@@ -101,7 +101,6 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
         chain_type INT NOT NULL,      \
         identifier INT NOT NULL,           \
         root_hash BLOB NOT NULL,     \
-        stratum_node INT NOT NULL,           \
         PRIMARY KEY (identifier)     \
         );",
                        NULL, NULL, &err);
@@ -119,7 +118,7 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
 
     encryptedOk = true;
 
-    this->setInterval(60 * 1000);
+    this->setInterval(15 * 1000);
 }
 
 int32_t StoreForwardPlusPlusModule::runOnce()
@@ -136,6 +135,7 @@ int32_t StoreForwardPlusPlusModule::runOnce()
     // get tip of chain for this channel
     uint8_t last_message_chain_hash[32] = {0};
     uint8_t last_message_hash[32] = {0};
+    LOG_WARN("here5");
 
     if (!getChainEnd(hash, last_message_chain_hash, last_message_hash)) {
         LOG_WARN("Store and Forward++ database lookup returned null");
@@ -251,7 +251,7 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
     }
     // refuse without valid time?
     LOG_WARN("in handleReceived");
-    if (mp.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP && mp.decoded.dest == NODENUM_BROADCAST) {
+    if (mp.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP && mp.to == NODENUM_BROADCAST) {
 
         // need to resolve the channel hash to the root hash
         getRootFromChannelHash(router->p_encrypted->channel, root_hash_bytes);
@@ -372,6 +372,7 @@ bool StoreForwardPlusPlusModule::getOrAddRootFromChannelHash(ChannelHash _ch_has
             chain_hash.finalize(_root_hash, 32);
 
             addRootToMappings(_ch_hash, _root_hash);
+            LOG_WARN("here4");
         }
     }
     return isNew;
@@ -384,19 +385,27 @@ bool StoreForwardPlusPlusModule::addRootToMappings(ChannelHash _ch_hash, uint8_t
     sqlite3_stmt *getHash;
 
     // write to the table
-    auto rc =
+    int rc =
         sqlite3_prepare_v2(ppDb, "INSERT INTO mappings (chain_type, identifier, root_hash) VALUES(?, ?, ?);", -1, &getHash, NULL);
     LOG_WARN("%d", rc);
-    sqlite3_bind_int(getHash, 1, chain_types::channel_chain);
+    int type = chain_types::channel_chain;
+    // note, must be an int variable
+
+    sqlite3_bind_int(getHash, 1, type);
     sqlite3_bind_int(getHash, 2, _ch_hash);
     sqlite3_bind_blob(getHash, 3, _root_hash, 32, NULL);
+    LOG_WARN("here1");
     // sqlite3_bind_int(getHash, 4, nodeToAdd);
-    sqlite3_step(getHash);
+    rc = sqlite3_step(getHash);
+    LOG_WARN("here2 %u, %s", rc, sqlite3_errmsg(ppDb));
     sqlite3_finalize(getHash);
+    LOG_WARN("here3");
+    return true;
 }
 
 bool StoreForwardPlusPlusModule::getChainEnd(ChannelHash _ch_hash, uint8_t *_chain_hash, uint8_t *_message_hash)
 {
+    LOG_WARN("getChainEnd");
 
     std::string getEntry_string =
         "select commit_hash, message_hash from channel_messages where channel_hash=? order by rowid desc LIMIT 1;";
@@ -405,7 +414,7 @@ bool StoreForwardPlusPlusModule::getChainEnd(ChannelHash _ch_hash, uint8_t *_cha
     sqlite3_bind_int(getEntry, 1, _ch_hash);
     sqlite3_step(getEntry);
     uint8_t *last_message_chain_hash = (uint8_t *)sqlite3_column_blob(getEntry, 0);
-    uint8_t *last_message_hash = (uint8_t *)sqlite3_column_blob(getEntry, 0);
+    uint8_t *last_message_hash = (uint8_t *)sqlite3_column_blob(getEntry, 1);
 
     if (last_message_chain_hash == nullptr || last_message_hash == nullptr) {
         LOG_WARN("Store and Forward++ database lookup returned null");
