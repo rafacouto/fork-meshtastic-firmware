@@ -276,6 +276,31 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
     LOG_WARN("in handleReceived");
     if (mp.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP && mp.to == NODENUM_BROADCAST) {
 
+        // do not include rxtime in the message hash. We want these to match when more then one node receives and compares notes.
+        // maybe include it in the commit hash
+
+        message_hash.reset();
+        message_hash.update(router->p_encrypted->encrypted.bytes, router->p_encrypted->encrypted.size);
+        message_hash.update(&mp.to, sizeof(mp.to));
+        message_hash.update(&mp.from, sizeof(mp.from));
+        message_hash.update(&mp.id, sizeof(mp.id));
+        message_hash.finalize(message_hash_bytes, 32);
+
+        sqlite3_stmt *checkDup;
+        sqlite3_prepare_v2(ppDb, "SELECT COUNT(*) from channel_messages where commit_hash=?", -1, &checkDup, NULL);
+        sqlite3_bind_blob(checkDup, 1, message_hash_bytes, 32, NULL);
+        sqlite3_step(checkDup);
+        int numberFound = sqlite3_column_int(checkDup, 0);
+        LOG_WARN("found %u times in db", numberFound);
+
+        if (numberFound != 0)
+            return ProcessMessage::CONTINUE;
+
+        if (!portduino_config.sfpp_stratum0) {
+            LOG_WARN("TODO: downstream collection of messages");
+            return ProcessMessage::CONTINUE;
+        }
+
         // need to resolve the channel hash to the root hash
         getRootFromChannelHash(router->p_encrypted->channel, root_hash_bytes);
 
@@ -294,15 +319,8 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
             printBytes("new chain root: 0x", root_hash_bytes, 32);
         }
 
-        // do not include rxtime in the message hash. We want these to match when more then one node receives and compares notes.
-        // feel free to include it in the commit hash
-
-        message_hash.reset();
-        message_hash.update(router->p_encrypted->encrypted.bytes, router->p_encrypted->encrypted.size);
-        message_hash.update(&mp.to, sizeof(mp.to));
-        message_hash.update(&mp.from, sizeof(mp.from));
-        message_hash.update(&mp.id, sizeof(mp.id));
-        message_hash.finalize(message_hash_bytes, 32);
+        // look for message_hash_bytes in db
+        // if found, we bail early
 
         chain_hash.reset();
         if (last_message_hash) {
