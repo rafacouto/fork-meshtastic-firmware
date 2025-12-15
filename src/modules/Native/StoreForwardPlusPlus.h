@@ -49,6 +49,8 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
     sqlite3_stmt *checkDup;
     sqlite3_stmt *checkScratch;
     sqlite3_stmt *removeScratch;
+    sqlite3_stmt *updatePayloadStmt;
+    sqlite3_stmt *getPayloadFromScratchStmt;
 
     // returns wasfound
     bool getRootFromChannelHash(ChannelHash, uint8_t *);
@@ -67,7 +69,7 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
 
     void requestNextMessage(uint8_t *, uint8_t *);
 
-    bool broadcastLink(uint8_t *_chain_hash, uint8_t *_root_hash);
+    bool broadcastLink(uint8_t *, uint8_t *);
 
     bool addToChain(uint32_t, uint32_t, uint32_t, bool, ChannelHash, uint8_t *, size_t, uint8_t *, uint8_t *, uint8_t *, uint32_t,
                     char *, size_t);
@@ -80,6 +82,10 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
     bool isInScratch(uint8_t *);
 
     void removeFromScratch(uint8_t *);
+
+    void updatePayload(uint8_t *, const char *, size_t);
+
+    std::string getPayloadFromScratch(uint8_t *);
 
     enum chain_types {
         channel_chain = 0,

@@ -147,6 +147,10 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
 
     sqlite3_prepare_v2(ppDb, "DELETE from local_messages where message_hash=?", -1, &removeScratch, NULL);
 
+    sqlite3_prepare_v2(ppDb, "UPDATE channel_messages SET payload=? WHERE message_hash=?", -1, &updatePayloadStmt, NULL);
+
+    sqlite3_prepare_v2(ppDb, "SELECT payload from local_messages WHERE message_hash=?", -1, &getPayloadFromScratchStmt, NULL);
+
     encryptedOk = true;
 
     // wait about 15 seconds after boot for the first runOnce()
@@ -259,8 +263,14 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
             addToChain(t->encapsulated_to, t->encapsulated_from, t->encapsulated_id, false, _channel_hash, t->message.bytes,
                        t->message.size, t->message_hash.bytes, t->chain_hash.bytes, t->root_hash.bytes, t->encapsulated_rxtime,
                        "", 0);
-            if (isInScratch(t->message_hash.bytes))
+            if (isInScratch(t->message_hash.bytes)) {
+                // TODO: Copy payload from scratch into chain
+                std::string payloadFromScratch = getPayloadFromScratch(t->message_hash.bytes);
+                if (payloadFromScratch != "") {
+                    updatePayload(t->message_hash.bytes, payloadFromScratch.c_str(), payloadFromScratch.size());
+                }
                 removeFromScratch(t->message_hash.bytes);
+            }
             requestNextMessage(t->root_hash.bytes, t->chain_hash.bytes);
 
             // check for message hash in scratch
@@ -363,7 +373,8 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
                    router->p_encrypted->encrypted.size, message_hash_bytes, chain_hash_bytes, root_hash_bytes, mp.rx_time,
                    (char *)mp.decoded.payload.bytes, mp.decoded.payload.size);
 
-        // TODO: If under 25% usage, go ahead and trigger a canon announce
+        // TODO: Limit to 25% bandwidth
+        canonAnnounce(message_hash_bytes, chain_hash_bytes, root_hash_bytes);
 
         return ProcessMessage::CONTINUE; // Let others look at this message also if they want
 
@@ -627,6 +638,7 @@ bool StoreForwardPlusPlusModule::addToChain(uint32_t to, uint32_t from, uint32_t
                                             size_t payload_len)
 
 {
+    LOG_WARN("Add to chain");
     // TODO: Make a data structure for this data
 
     // push a message into the local chain DB
@@ -751,6 +763,30 @@ void StoreForwardPlusPlusModule::removeFromScratch(uint8_t *message_hash_bytes)
     sqlite3_step(removeScratch);
     int numberFound = sqlite3_column_int(removeScratch, 0);
     sqlite3_reset(removeScratch);
+}
+
+void StoreForwardPlusPlusModule::updatePayload(uint8_t *message_hash_bytes, const char *payload_bytes, size_t payload_len)
+{
+    LOG_WARN("updatePayload");
+    sqlite3_bind_text(updatePayloadStmt, 1, payload_bytes, payload_len, NULL);
+    sqlite3_bind_blob(updatePayloadStmt, 2, message_hash_bytes, 32, NULL);
+    auto res = sqlite3_step(updatePayloadStmt);
+    const char *_error_mesg = sqlite3_errmsg(ppDb);
+    LOG_WARN("step %u, %s", res, _error_mesg);
+    sqlite3_reset(updatePayloadStmt);
+}
+
+std::string StoreForwardPlusPlusModule::getPayloadFromScratch(uint8_t *message_hash_bytes)
+{
+    LOG_WARN("getPayloadFromScratch");
+    sqlite3_bind_blob(getPayloadFromScratchStmt, 2, message_hash_bytes, 32, NULL);
+    auto res = sqlite3_step(getPayloadFromScratchStmt);
+    const char *_error_mesg = sqlite3_errmsg(ppDb);
+    LOG_WARN("step %u, %s", res, _error_mesg);
+    const char *tmp_text = (char *)sqlite3_column_text(getPayloadFromScratchStmt, 0);
+    size_t payload_len = sqlite3_column_bytes(getPayloadFromScratchStmt, 0);
+    std::string tmp_string(tmp_text, payload_len);
+    return tmp_string;
 }
 
 // announce latest hash
