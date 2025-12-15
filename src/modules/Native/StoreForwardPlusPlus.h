@@ -44,7 +44,11 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
 
   private:
     sqlite3 *ppDb;
-    sqlite3_stmt *stmt;
+    sqlite3_stmt *chain_insert_stmt;
+    sqlite3_stmt *scratch_insert_stmt;
+    sqlite3_stmt *checkDup;
+    sqlite3_stmt *checkScratch;
+    sqlite3_stmt *removeScratch;
 
     // returns wasfound
     bool getRootFromChannelHash(ChannelHash, uint8_t *);
@@ -67,6 +71,15 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
 
     bool addToChain(uint32_t, uint32_t, uint32_t, bool, ChannelHash, uint8_t *, size_t, uint8_t *, uint8_t *, uint8_t *, uint32_t,
                     char *, size_t);
+    bool addToScratch(uint32_t, uint32_t, uint32_t, bool, ChannelHash, uint8_t *, size_t, uint8_t *, uint8_t *, uint32_t, char *,
+                      size_t);
+    void canonAnnounce(uint8_t *, uint8_t *, uint8_t *);
+
+    bool isInDB(uint8_t *);
+
+    bool isInScratch(uint8_t *);
+
+    void removeFromScratch(uint8_t *);
 
     enum chain_types {
         channel_chain = 0,
