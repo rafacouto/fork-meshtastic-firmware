@@ -669,8 +669,9 @@ bool StoreForwardPlusPlusModule::addToScratch(uint32_t to, uint32_t from, uint32
 
     // payload
     sqlite3_bind_text(scratch_insert_stmt, 9, payload_bytes, payload_len, NULL);
+    const char *_error_mesg = sqlite3_errmsg(ppDb);
 
-    sqlite3_step(scratch_insert_stmt);
+    LOG_WARN("step %u, %s", sqlite3_step(scratch_insert_stmt), _error_mesg);
     sqlite3_reset(scratch_insert_stmt);
     return true;
 }
