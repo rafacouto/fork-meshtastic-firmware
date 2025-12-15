@@ -137,7 +137,7 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
         encrypted_bytes, message_hash, rx_time, commit_hash, payload) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
                        -1, &chain_insert_stmt, NULL);
 
-    sqlite3_prepare_v2(ppDb, "INSERT INTO channel_messages (destination, sender, packet_id, want_ack, channel_hash, \
+    sqlite3_prepare_v2(ppDb, "INSERT INTO local_messages (destination, sender, packet_id, want_ack, channel_hash, \
         encrypted_bytes, message_hash, rx_time, payload) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);",
                        -1, &scratch_insert_stmt, NULL);
 
