@@ -49,6 +49,10 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
     // returns wasfound
     bool getRootFromChannelHash(ChannelHash, uint8_t *);
 
+    ChannelHash getChannelHashFromRoot(uint8_t *_root_hash);
+
+    bool getNextHash(uint8_t *_root_hash, uint8_t *_chain_hash, uint8_t *next_chain_hash);
+
     // returns isnew
     bool getOrAddRootFromChannelHash(ChannelHash, uint8_t *);
 
@@ -58,6 +62,8 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
     bool getChainEnd(ChannelHash, uint8_t *, uint8_t *);
 
     void requestNextMessage(uint8_t *, uint8_t *);
+
+    bool broadcastLink(uint8_t *_chain_hash, uint8_t *_root_hash);
 
     enum chain_types {
         channel_chain = 0,
