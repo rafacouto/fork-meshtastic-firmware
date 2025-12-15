@@ -536,7 +536,7 @@ bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_chai
     }
     sqlite3_bind_int(getHash, 1, _channel_hash);
 
-    bool found_hash = false;
+    bool next_hash = false;
 
     // asking for the first entry on the chain
     if (memcmp(_root_hash, _chain_hash, 32) == 0) {
@@ -547,8 +547,10 @@ bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_chai
         uint8_t *tmp_chain_hash = (uint8_t *)sqlite3_column_blob(getHash, 0);
         printBytes("chain_hash", tmp_chain_hash, 32);
         memcpy(next_chain_hash, tmp_chain_hash, 32);
-        found_hash = true;
+        next_hash = true;
     } else {
+        bool found_hash = false;
+
         LOG_WARN("Looking for next hashes");
         uint8_t *tmp_chain_hash;
         while (sqlite3_step(getHash) != SQLITE_DONE) {
@@ -558,6 +560,7 @@ bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_chai
             if (found_hash) {
                 LOG_WARN("Found hash");
                 memcpy(next_chain_hash, tmp_chain_hash, 32);
+                next_hash = true;
                 break;
             }
             if (memcmp(tmp_chain_hash, _chain_hash, 32) == 0)
@@ -566,7 +569,7 @@ bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_chai
     }
 
     sqlite3_finalize(getHash);
-    return found_hash;
+    return next_hash;
 }
 
 bool StoreForwardPlusPlusModule::broadcastLink(uint8_t *_chain_hash, uint8_t *_root_hash)
