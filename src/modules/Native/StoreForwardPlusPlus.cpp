@@ -182,8 +182,9 @@ int32_t StoreForwardPlusPlusModule::runOnce()
 bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshtastic_StoreForwardPlusPlus *t)
 {
     LOG_WARN("in handleReceivedProtobuf");
-    LOG_WARN("Sfp++ node %u is informing us of packet", mp.from);
+    LOG_WARN("Sfp++ node %u sent us sf++ packet", mp.from);
     printBytes("chain_hash ", t->chain_hash.bytes, t->chain_hash.size);
+    printBytes("root_hash ", t->root_hash.bytes, t->root_hash.size);
     if (t->sfpp_message_type == meshtastic_StoreForwardPlusPlus_SFPP_message_type_CANON_ANNOUNCE) {
         // check chain_hash.size
 
@@ -232,10 +233,11 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
         uint8_t next_chain_hash[32] = {0};
 
         LOG_WARN("Received link request");
-        getNextHash(t->root_hash.bytes, t->chain_hash.bytes, next_chain_hash);
-        printBytes("next chain hash: ", next_chain_hash, 32);
+        if (getNextHash(t->root_hash.bytes, t->chain_hash.bytes, next_chain_hash)) {
+            printBytes("next chain hash: ", next_chain_hash, 32);
 
-        broadcastLink(next_chain_hash, t->root_hash.bytes);
+            broadcastLink(next_chain_hash, t->root_hash.bytes);
+        }
 
         // if root and chain hashes are the same, grab the first message on the chain
         // if different, get the message directly after.
@@ -249,6 +251,7 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
         if (portduino_config.sfpp_stratum0) {
             // check for message_hash in db
             // calculate the chain_hash
+            LOG_ERROR("TODO calculate chain");
             addToChain(t->encapsulated_to, t->encapsulated_from, t->encapsulated_id, false, _channel_hash, t->message.bytes,
                        t->message.size, t->message_hash.bytes, t->chain_hash.bytes, t->root_hash.bytes, t->encapsulated_rxtime,
                        "", 0);
@@ -258,6 +261,8 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                        "", 0);
             if (isInScratch(t->message_hash.bytes))
                 removeFromScratch(t->message_hash.bytes);
+            requestNextMessage(t->root_hash.bytes, t->chain_hash.bytes);
+
             // check for message hash in scratch
         }
 
@@ -530,19 +535,28 @@ bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_chai
         LOG_WARN("here2 %u, %s", rc, sqlite3_errmsg(ppDb));
     }
     sqlite3_bind_int(getHash, 1, _channel_hash);
-    sqlite3_step(getHash);
+
     bool found_hash = false;
 
     // asking for the first entry on the chain
     if (memcmp(_root_hash, _chain_hash, 32) == 0) {
+        rc = sqlite3_step(getHash);
+        if (rc != SQLITE_OK) {
+            LOG_WARN("here2 %u, %s", rc, sqlite3_errmsg(ppDb));
+        }
         uint8_t *tmp_chain_hash = (uint8_t *)sqlite3_column_blob(getHash, 0);
+        printBytes("chain_hash", tmp_chain_hash, 32);
         memcpy(next_chain_hash, tmp_chain_hash, 32);
         found_hash = true;
     } else {
+        LOG_WARN("Looking for next hashes");
         uint8_t *tmp_chain_hash;
         while (sqlite3_step(getHash) != SQLITE_DONE) {
             tmp_chain_hash = (uint8_t *)sqlite3_column_blob(getHash, 0);
+            printBytes("chain_hash", tmp_chain_hash, 32);
+
             if (found_hash) {
+                LOG_WARN("Found hash");
                 memcpy(next_chain_hash, tmp_chain_hash, 32);
                 break;
             }
