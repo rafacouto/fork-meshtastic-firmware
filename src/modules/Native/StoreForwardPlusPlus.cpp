@@ -331,8 +331,8 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
 
         // need to resolve the channel hash to the root hash
         getRootFromChannelHash(router->p_encrypted->channel, root_hash_bytes);
-        uint8_t *last_message_hash;
-        uint8_t *last_chain_hash;
+        uint8_t last_message_hash[32] = {0};
+        uint8_t last_chain_hash[32] = {0};
 
         chain_hash.reset();
 
@@ -464,10 +464,18 @@ bool StoreForwardPlusPlusModule::getChainEnd(ChannelHash _ch_hash, uint8_t *_cha
     sqlite3_step(getEntry);
     uint8_t *last_message_chain_hash = (uint8_t *)sqlite3_column_blob(getEntry, 0);
     uint8_t *last_message_hash = (uint8_t *)sqlite3_column_blob(getEntry, 1);
-    if (last_message_chain_hash != nullptr)
+    LOG_WARN("herex");
+    if (last_message_chain_hash != nullptr) {
+        LOG_WARN("herex");
+
         memcpy(_chain_hash, last_message_chain_hash, 32);
-    if (last_message_hash != nullptr)
+    }
+    if (last_message_hash != nullptr) {
+        LOG_WARN("herex");
+
         memcpy(_message_hash, last_message_hash, 32);
+    }
+    LOG_WARN("herex");
 
     if (last_message_chain_hash == nullptr || last_message_hash == nullptr) {
         LOG_WARN("Store and Forward++ database lookup returned null");
@@ -475,6 +483,8 @@ bool StoreForwardPlusPlusModule::getChainEnd(ChannelHash _ch_hash, uint8_t *_cha
 
         return false;
     }
+    LOG_WARN("herey");
+
     sqlite3_finalize(getEntry);
     return true;
 }
