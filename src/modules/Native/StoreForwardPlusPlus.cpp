@@ -206,7 +206,7 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                     return true;
                 }
             } else {
-                // There's the possibility that
+
                 addRootToMappings(router->p_encrypted->channel, t->root_hash.bytes);
                 LOG_WARN("Adding root hash to mappings");
             }
@@ -221,6 +221,7 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                     LOG_WARN("End of chain matches!");
                     // TODO: Send a message from the local queue
                 } else {
+                    // TODO: Check for a matching message in the scratch, and do this automatically if possible
                     ("End of chain does not match!");
                     requestNextMessage(t->root_hash.bytes, last_message_chain_hash);
                 }
@@ -228,10 +229,6 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                 LOG_WARN("No Messages on this chain, request!");
                 requestNextMessage(t->root_hash.bytes, t->root_hash.bytes);
             }
-
-            // compare to chain tip in incoming message
-
-            // if not found, request the next message
         }
     } else if (t->sfpp_message_type == meshtastic_StoreForwardPlusPlus_SFPP_message_type_LINK_REQUEST) {
         uint8_t next_chain_hash[32] = {0};
@@ -779,7 +776,7 @@ void StoreForwardPlusPlusModule::updatePayload(uint8_t *message_hash_bytes, cons
 std::string StoreForwardPlusPlusModule::getPayloadFromScratch(uint8_t *message_hash_bytes)
 {
     LOG_WARN("getPayloadFromScratch");
-    sqlite3_bind_blob(getPayloadFromScratchStmt, 2, message_hash_bytes, 32, NULL);
+    sqlite3_bind_blob(getPayloadFromScratchStmt, 1, message_hash_bytes, 32, NULL);
     auto res = sqlite3_step(getPayloadFromScratchStmt);
     const char *_error_mesg = sqlite3_errmsg(ppDb);
     LOG_WARN("step %u, %s", res, _error_mesg);
