@@ -272,11 +272,14 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                 }
                 removeFromScratch(t->message_hash.bytes);
             } else {
+                // TODO: compare the time, and don't rebroadcast really old messages
                 // if this packet is new to us, we rebroadcast it
+                LOG_WARN("Attempting to Rebroadcast");
                 meshtastic_MeshPacket *p = router->allocForSending();
                 p->to = t->encapsulated_to;
                 p->from = t->encapsulated_from;
                 p->id = t->encapsulated_id;
+                p->channel = _channel_hash;
                 p->which_payload_variant = meshtastic_MeshPacket_encrypted_tag;
                 p->encrypted.size = t->message.size;
                 memcpy(p->encrypted.bytes, t->message.bytes, t->message.size);
