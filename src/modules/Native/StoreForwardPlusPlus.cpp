@@ -141,11 +141,11 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
         encrypted_bytes, message_hash, rx_time, payload) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);",
                        -1, &scratch_insert_stmt, NULL);
 
-    sqlite3_prepare_v2(ppDb, "SELECT COUNT(*) from channel_messages where commit_hash=?", -1, &checkDup, NULL);
+    sqlite3_prepare_v2(ppDb, "SELECT COUNT(*) from channel_messages where message_hash=?", -1, &checkDup, NULL);
 
-    sqlite3_prepare_v2(ppDb, "SELECT COUNT(*) from local_messages where commit_hash=?", -1, &checkScratch, NULL);
+    sqlite3_prepare_v2(ppDb, "SELECT COUNT(*) from local_messages where message_hash=?", -1, &checkScratch, NULL);
 
-    sqlite3_prepare_v2(ppDb, "DELETE from local_messages where commit_hash=?", -1, &removeScratch, NULL);
+    sqlite3_prepare_v2(ppDb, "DELETE from local_messages where message_hash=?", -1, &removeScratch, NULL);
 
     encryptedOk = true;
 
@@ -734,6 +734,7 @@ bool StoreForwardPlusPlusModule::isInDB(uint8_t *message_hash_bytes)
 
 bool StoreForwardPlusPlusModule::isInScratch(uint8_t *message_hash_bytes)
 {
+    LOG_WARN("isInScratch");
     sqlite3_bind_blob(checkScratch, 1, message_hash_bytes, 32, NULL);
     sqlite3_step(checkScratch);
     int numberFound = sqlite3_column_int(checkScratch, 0);
