@@ -41,6 +41,7 @@
 #include "RTC.h"
 #include "SHA256.h"
 #include "meshUtils.h"
+#include "modules/RoutingModule.h"
 
 StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
     : ProtobufModule("StoreForwardpp", meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP, &meshtastic_StoreForwardPlusPlus_msg),
@@ -256,6 +257,9 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
             addToChain(t->encapsulated_to, t->encapsulated_from, t->encapsulated_id, false, _channel_hash, t->message.bytes,
                        t->message.size, t->message_hash.bytes, t->chain_hash.bytes, t->root_hash.bytes, t->encapsulated_rxtime,
                        "", 0);
+            // auto pAck = routingModule->allocAckNak(meshtastic_Routing_Error_NONE, getFrom(e.packet), e.packet->id, ch.index);
+            // pAck->transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT;
+            // router->sendLocal(pAck);
         } else {
             addToChain(t->encapsulated_to, t->encapsulated_from, t->encapsulated_id, false, _channel_hash, t->message.bytes,
                        t->message.size, t->message_hash.bytes, t->chain_hash.bytes, t->root_hash.bytes, t->encapsulated_rxtime,
@@ -267,6 +271,17 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                     updatePayload(t->message_hash.bytes, payloadFromScratch.c_str(), payloadFromScratch.size());
                 }
                 removeFromScratch(t->message_hash.bytes);
+            } else {
+                // if this packet is new to us, we rebroadcast it
+                meshtastic_MeshPacket *p = router->allocForSending();
+                p->to = t->encapsulated_to;
+                p->from = t->encapsulated_from;
+                p->id = t->encapsulated_id;
+                p->which_payload_variant = meshtastic_MeshPacket_encrypted_tag;
+                p->encrypted.size = t->message.size;
+                memcpy(p->encrypted.bytes, t->message.bytes, t->message.size);
+                p->transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA; // only a tiny white lie
+                router->sendLocal(p);
             }
             requestNextMessage(t->root_hash.bytes, t->chain_hash.bytes);
 
