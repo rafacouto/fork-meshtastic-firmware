@@ -668,7 +668,7 @@ bool StoreForwardPlusPlusModule::addToScratch(uint32_t to, uint32_t from, uint32
     sqlite3_bind_int(scratch_insert_stmt, 8, _rx_time);
 
     // payload
-    sqlite3_bind_text(scratch_insert_stmt, 10, payload_bytes, payload_len, NULL);
+    sqlite3_bind_text(scratch_insert_stmt, 9, payload_bytes, payload_len, NULL);
 
     sqlite3_step(scratch_insert_stmt);
     sqlite3_reset(scratch_insert_stmt);
