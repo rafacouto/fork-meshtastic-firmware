@@ -230,6 +230,11 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
 
     } else if (t->sfpp_message_type == meshtastic_StoreForwardPlusPlus_SFPP_message_type_LINK_PROVIDE) {
         LOG_WARN("Link Provide received!");
+        ChannelHash _channel_hash = getChannelHashFromRoot(t->root_hash.bytes);
+
+        addToChain(t->encapsulated_to, t->encapsulated_from, t->encapsulated_id, false, _channel_hash, t->message.bytes,
+                   t->message.size, t->message_hash.bytes, t->chain_hash.bytes, t->root_hash.bytes, t->encapsulated_rxtime, "",
+                   0);
     }
 
     return true;
@@ -314,31 +319,10 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
         // select HEX(commit_hash),HEX(channel_hash), payload, destination from channel_messages order by rowid desc;
 
         // push a message into the local chain DB
-        // destination
-        sqlite3_bind_int(stmt, 1, mp.to);
-        // sender
-        sqlite3_bind_int(stmt, 2, mp.from);
-        // packet_id
-        sqlite3_bind_int(stmt, 3, mp.id);
-        // want_ack
-        sqlite3_bind_int(stmt, 4, mp.want_ack);
-        // channel_hash
-        sqlite3_bind_int(stmt, 5, router->p_encrypted->channel);
-        // encrypted_bytes
-        sqlite3_bind_blob(stmt, 6, router->p_encrypted->encrypted.bytes, router->p_encrypted->encrypted.size, NULL);
 
-        // message_hash
-        sqlite3_bind_blob(stmt, 7, message_hash_bytes, 32, NULL);
-        // rx_time
-        sqlite3_bind_int(stmt, 8, mp.rx_time);
-
-        // commit_hash
-        sqlite3_bind_blob(stmt, 9, chain_hash_bytes, 32, NULL);
-        // payload
-        sqlite3_bind_text(stmt, 10, (char *)mp.decoded.payload.bytes, mp.decoded.payload.size, NULL);
-
-        sqlite3_step(stmt);
-        sqlite3_reset(stmt);
+        addToChain(mp.to, mp.from, mp.id, mp.want_ack, router->p_encrypted->channel, router->p_encrypted->encrypted.bytes,
+                   router->p_encrypted->encrypted.size, message_hash_bytes, chain_hash_bytes, root_hash_bytes, mp.rx_time,
+                   (char *)mp.decoded.payload.bytes, mp.decoded.payload.size);
 
         return ProcessMessage::CONTINUE; // Let others look at this message also if they want
 
@@ -569,6 +553,41 @@ bool StoreForwardPlusPlusModule::broadcastLink(uint8_t *_chain_hash, uint8_t *_r
     p->channel = 0;
     LOG_INFO("Send link to mesh");
     service->sendToMesh(p, RX_SRC_LOCAL, true);
+    return true;
+}
+
+bool StoreForwardPlusPlusModule::addToChain(uint32_t to, uint32_t from, uint32_t id, bool want_ack, ChannelHash channel_hash,
+                                            uint8_t *encrypted_bytes, size_t encrypted_len, uint8_t *_message_hash,
+                                            uint8_t *_chain_hash, uint8_t *_root_hash, uint32_t _rx_time, char *payload_bytes,
+                                            size_t payload_len)
+
+{
+    // push a message into the local chain DB
+    // destination
+    sqlite3_bind_int(stmt, 1, to);
+    // sender
+    sqlite3_bind_int(stmt, 2, from);
+    // packet_id
+    sqlite3_bind_int(stmt, 3, id);
+    // want_ack
+    sqlite3_bind_int(stmt, 4, want_ack);
+    // channel_hash
+    sqlite3_bind_int(stmt, 5, channel_hash);
+    // encrypted_bytes
+    sqlite3_bind_blob(stmt, 6, encrypted_bytes, encrypted_len, NULL);
+
+    // message_hash
+    sqlite3_bind_blob(stmt, 7, _message_hash, 32, NULL);
+    // rx_time
+    sqlite3_bind_int(stmt, 8, _rx_time);
+
+    // commit_hash
+    sqlite3_bind_blob(stmt, 9, _chain_hash, 32, NULL);
+    // payload
+    sqlite3_bind_text(stmt, 10, payload_bytes, payload_len, NULL);
+
+    sqlite3_step(stmt);
+    sqlite3_reset(stmt);
     return true;
 }
 

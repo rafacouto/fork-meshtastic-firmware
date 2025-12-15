@@ -65,6 +65,9 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
 
     bool broadcastLink(uint8_t *_chain_hash, uint8_t *_root_hash);
 
+    bool addToChain(uint32_t, uint32_t, uint32_t, bool, ChannelHash, uint8_t *, size_t, uint8_t *, uint8_t *, uint8_t *, uint32_t,
+                    char *, size_t);
+
     enum chain_types {
         channel_chain = 0,
     };
