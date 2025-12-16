@@ -105,8 +105,6 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
 
     void updatePayload(uint8_t *, const char *, size_t);
 
-    std::string getPayloadFromScratch(uint8_t *);
-
     enum chain_types {
         channel_chain = 0,
     };

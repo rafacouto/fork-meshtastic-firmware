@@ -158,8 +158,6 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
 
     sqlite3_prepare_v2(ppDb, "UPDATE channel_messages SET payload=? WHERE message_hash=?", -1, &updatePayloadStmt, NULL);
 
-    sqlite3_prepare_v2(ppDb, "SELECT payload from local_messages WHERE message_hash=?", -1, &getPayloadFromScratchStmt, NULL);
-
     encryptedOk = true;
 
     // wait about 15 seconds after boot for the first runOnce()
@@ -363,9 +361,9 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                        "", 0);
             if (isInScratch(t->message_hash.bytes)) {
                 // TODO: Copy payload from scratch into chain
-                std::string payloadFromScratch = getPayloadFromScratch(t->message_hash.bytes);
-                if (payloadFromScratch != "") {
-                    updatePayload(t->message_hash.bytes, payloadFromScratch.c_str(), payloadFromScratch.size());
+                link_object scratch_object = getFromScratch(t->message_hash.bytes, 32);
+                if (scratch_object.payload != "") {
+                    updatePayload(t->message_hash.bytes, scratch_object.payload.c_str(), scratch_object.payload.size());
                 }
                 removeFromScratch(t->message_hash.bytes);
             } else {
@@ -929,19 +927,6 @@ void StoreForwardPlusPlusModule::updatePayload(uint8_t *message_hash_bytes, cons
     const char *_error_mesg = sqlite3_errmsg(ppDb);
     LOG_WARN("step %u, %s", res, _error_mesg);
     sqlite3_reset(updatePayloadStmt);
-}
-
-std::string StoreForwardPlusPlusModule::getPayloadFromScratch(uint8_t *message_hash_bytes)
-{
-    LOG_WARN("getPayloadFromScratch");
-    sqlite3_bind_blob(getPayloadFromScratchStmt, 1, message_hash_bytes, 32, NULL);
-    auto res = sqlite3_step(getPayloadFromScratchStmt);
-    const char *_error_mesg = sqlite3_errmsg(ppDb);
-    LOG_WARN("step %u, %s", res, _error_mesg);
-    const char *tmp_text = (char *)sqlite3_column_text(getPayloadFromScratchStmt, 0);
-    size_t payload_len = sqlite3_column_bytes(getPayloadFromScratchStmt, 0);
-    std::string tmp_string(tmp_text, payload_len);
-    return tmp_string;
 }
 
 StoreForwardPlusPlusModule::link_object StoreForwardPlusPlusModule::getFromScratch(uint8_t *message_hash_bytes, size_t hash_len)
