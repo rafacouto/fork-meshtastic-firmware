@@ -64,11 +64,10 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
         destination INT NOT NULL,      \
         sender INT NOT NULL,           \
         packet_id INT NOT NULL,        \
-        want_ack BOOL NOT NULL,        \
-        channel_hash INT NOT NULL,      \
+        rx_time INT NOT NULL,          \
+        root_hash BLOB NOT NULL,      \
         encrypted_bytes BLOB NOT NULL, \
         message_hash BLOB NOT NULL,    \
-        rx_time INT NOT NULL,          \
         commit_hash BLOB NOT NULL,     \
         payload TEXT,                  \
         PRIMARY KEY (message_hash)     \
@@ -84,11 +83,10 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
         destination INT NOT NULL,      \
         sender INT NOT NULL,           \
         packet_id INT NOT NULL,        \
-        want_ack BOOL NOT NULL,        \
+        rx_time INT NOT NULL,          \
         channel_hash INT NOT NULL,      \
         encrypted_bytes BLOB NOT NULL, \
         message_hash BLOB NOT NULL,    \
-        rx_time INT NOT NULL,          \
         payload TEXT,                  \
         PRIMARY KEY (message_hash)     \
         );",
@@ -104,13 +102,12 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
         destination INT NOT NULL,      \
         sender INT NOT NULL,           \
         packet_id INT NOT NULL,        \
-        want_ack BOOL NOT NULL,        \
-        channel_hash INT NOT NULL,      \
+        rx_time INT NOT NULL,          \
+        channel_hash INT NOT NULL,     \
         commit_hash BLOB NOT NULL,     \
         encrypted_bytes BLOB NOT NULL, \
         message_hash BLOB NOT NULL,    \
         payload TEXT,                  \
-        rx_time INT NOT NULL,          \
         PRIMARY KEY (message_hash)     \
         );",
                        NULL, NULL, &err);
@@ -136,15 +133,15 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
     // store schema version somewhere
 
     // prepared statements *should* make this faster.
-    sqlite3_prepare_v2(ppDb, "INSERT INTO channel_messages (destination, sender, packet_id, want_ack, channel_hash, \
-        encrypted_bytes, message_hash, rx_time, commit_hash, payload) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+    sqlite3_prepare_v2(ppDb, "INSERT INTO channel_messages (destination, sender, packet_id, root_hash, \
+        encrypted_bytes, message_hash, rx_time, commit_hash, payload) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);",
                        -1, &chain_insert_stmt, NULL);
 
-    sqlite3_prepare_v2(ppDb, "INSERT INTO local_messages (destination, sender, packet_id, want_ack, channel_hash, \
-        encrypted_bytes, message_hash, rx_time, payload) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);",
+    sqlite3_prepare_v2(ppDb, "INSERT INTO local_messages (destination, sender, packet_id, channel_hash, \
+        encrypted_bytes, message_hash, rx_time, payload) VALUES(?, ?, ?, ?, ?, ?, ?, ?);",
                        -1, &scratch_insert_stmt, NULL);
 
-    sqlite3_prepare_v2(ppDb, "select destination, sender, packet_id, encrypted_bytes, message_hash, rx_time \
+    sqlite3_prepare_v2(ppDb, "select destination, sender, packet_id, encrypted_bytes, message_hash, rx_time, channel_hash \
         from local_messages where channel_hash=? order by rx_time asc LIMIT 1;", // earliest first
                        -1, &fromScratchStmt, NULL);
 
@@ -176,38 +173,45 @@ int32_t StoreForwardPlusPlusModule::runOnce()
     getOrAddRootFromChannelHash(hash, root_hash_bytes);
 
     // get tip of chain for this channel
-    uint8_t last_message_chain_hash[32] = {0};
+    uint8_t last_message_commit_hash[32] = {0};
     uint8_t last_message_hash[32] = {0};
-
-    if (!getChainEnd(hash, last_message_chain_hash, last_message_hash)) {
+    uint32_t chain_end_rx_time = getChainEnd(hash, last_message_commit_hash, last_message_hash);
+    if (chain_end_rx_time == 0) {
         LOG_WARN("Store and Forward++ database lookup returned null");
         return 60 * 60 * 1000;
     }
 
     // if we have something in scratch, maybe send it rather then announce?
-
-    canonAnnounce(last_message_hash, last_message_chain_hash, root_hash_bytes);
+    // TODO: include timestamp?
+    // thought being that it would be nice to have an accurate timestamp on messages.
+    // if we don't include the timestamp in the CANON announcements, the only way to get it is to receive the full message.
+    canonAnnounce(last_message_hash, last_message_commit_hash, root_hash_bytes, chain_end_rx_time);
 
     return 60 * 60 * 1000;
 }
 
 bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshtastic_StoreForwardPlusPlus *t)
 {
+    SHA256 commit_hash;
+    uint8_t last_message_hash[32] = {0};
+    uint8_t last_commit_hash[32] = {0};
+    uint8_t commit_hash_bytes[32] = {0};
+
     LOG_WARN("in handleReceivedProtobuf");
     LOG_WARN("Sfp++ node %u sent us sf++ packet", mp.from);
-    printBytes("chain_hash ", t->chain_hash.bytes, t->chain_hash.size);
+    printBytes("commit_hash ", t->commit_hash.bytes, t->commit_hash.size);
     printBytes("root_hash ", t->root_hash.bytes, t->root_hash.size);
     if (t->sfpp_message_type == meshtastic_StoreForwardPlusPlus_SFPP_message_type_CANON_ANNOUNCE) {
-        // check chain_hash.size
+        // check commit_hash.size
 
         if (portduino_config.sfpp_stratum0) {
             LOG_WARN("Received a CANON_ANNOUNCE while stratum 0");
-            uint8_t next_chain_hash[32] = {0};
+            uint8_t next_commit_hash[32] = {0};
 
-            if (getNextHash(t->root_hash.bytes, t->chain_hash.bytes, next_chain_hash)) {
-                printBytes("next chain hash: ", next_chain_hash, 32);
+            if (getNextHash(t->root_hash.bytes, t->commit_hash.bytes, next_commit_hash)) {
+                printBytes("next chain hash: ", next_commit_hash, 32);
 
-                broadcastLink(next_chain_hash, t->root_hash.bytes);
+                broadcastLink(next_commit_hash, t->root_hash.bytes);
             }
         } else {
             uint8_t tmp_root_hash_bytes[32] = {0};
@@ -226,19 +230,54 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
             }
 
             // get tip of chain for this channel
-            uint8_t last_message_chain_hash[32] = {0};
+            uint8_t last_message_commit_hash[32] = {0};
             uint8_t last_message_hash[32] = {0};
 
             // get chain tip
-            if (getChainEnd(router->p_encrypted->channel, last_message_chain_hash, last_message_hash)) {
-                if (memcmp(last_message_chain_hash, t->chain_hash.bytes, 32) == 0) {
+            if (getChainEnd(router->p_encrypted->channel, last_message_commit_hash, last_message_hash)) {
+                if (memcmp(last_message_commit_hash, t->commit_hash.bytes, 32) == 0) {
                     LOG_WARN("End of chain matches!");
                     sendFromScratch(router->p_encrypted->channel);
                     // TODO: Send a message from the local queue
                 } else {
                     // TODO: Check for a matching message in the scratch, and do this automatically if possible
                     ("End of chain does not match!");
-                    requestNextMessage(t->root_hash.bytes, last_message_chain_hash);
+                    if (isInScratch(t->message_hash.bytes)) {
+
+                        commit_hash.reset();
+
+                        if (getChainEnd(router->p_encrypted->channel, last_commit_hash, last_message_hash)) {
+                            printBytes("last message: 0x", last_commit_hash, 32);
+                            commit_hash.update(last_commit_hash, 32);
+                        } else {
+                            printBytes("new chain root: 0x", t->root_hash.bytes, 32);
+                            commit_hash.update(t->root_hash.bytes, 32);
+                        }
+
+                        commit_hash.update(t->message_hash.bytes, 32);
+                        // message_hash.update(&mp.rx_time, sizeof(mp.rx_time));
+                        commit_hash.finalize(commit_hash_bytes, 32);
+
+                        // if this matches, we don't need to request the message
+                        // we know exactly what it is
+                        if (memcmp(commit_hash_bytes, t->commit_hash.bytes, 32) == 0) {
+                            link_object scratch_object = getFromScratch(t->message_hash.bytes, 32);
+
+                            // most of this we need to fetch from scratch
+                            addToChain(scratch_object.to, scratch_object.from, scratch_object.id, scratch_object.channel_hash,
+                                       scratch_object.encrypted_bytes, scratch_object.encrypted_len, scratch_object.message_hash,
+                                       commit_hash_bytes, t->root_hash.bytes, scratch_object.rx_time, "", 0);
+                            // TODO: Copy payload from scratch into chain
+                            if (scratch_object.payload != "") {
+                                updatePayload(t->message_hash.bytes, scratch_object.payload.c_str(),
+                                              scratch_object.payload.size());
+                            }
+                            removeFromScratch(t->message_hash.bytes);
+                            // short circuit and return
+                            return true;
+                        }
+                    }
+                    requestNextMessage(t->root_hash.bytes, last_message_commit_hash);
                 }
             } else {
                 LOG_WARN("No Messages on this chain, request!");
@@ -246,13 +285,13 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
             }
         }
     } else if (t->sfpp_message_type == meshtastic_StoreForwardPlusPlus_SFPP_message_type_LINK_REQUEST) {
-        uint8_t next_chain_hash[32] = {0};
+        uint8_t next_commit_hash[32] = {0};
 
         LOG_WARN("Received link request");
-        if (getNextHash(t->root_hash.bytes, t->chain_hash.bytes, next_chain_hash)) {
-            printBytes("next chain hash: ", next_chain_hash, 32);
+        if (getNextHash(t->root_hash.bytes, t->commit_hash.bytes, next_commit_hash)) {
+            printBytes("next chain hash: ", next_commit_hash, 32);
 
-            broadcastLink(next_chain_hash, t->root_hash.bytes);
+            broadcastLink(next_commit_hash, t->root_hash.bytes);
         }
 
         // if root and chain hashes are the same, grab the first message on the chain
@@ -280,30 +319,26 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                 LOG_WARN("Hash bytes mismatch for incoming link");
                 return true;
             }
-            SHA256 chain_hash;
-            uint8_t last_message_hash[32] = {0};
-            uint8_t last_chain_hash[32] = {0};
-            uint8_t chain_hash_bytes[32] = {0};
 
-            chain_hash.reset();
+            commit_hash.reset();
 
-            if (getChainEnd(router->p_encrypted->channel, last_chain_hash, last_message_hash)) {
-                printBytes("last message: 0x", last_chain_hash, 32);
-                chain_hash.update(last_chain_hash, 32);
+            if (getChainEnd(router->p_encrypted->channel, last_commit_hash, last_message_hash)) {
+                printBytes("last message: 0x", last_commit_hash, 32);
+                commit_hash.update(last_commit_hash, 32);
             } else {
                 printBytes("new chain root: 0x", root_hash_bytes, 32);
-                chain_hash.update(root_hash_bytes, 32);
+                commit_hash.update(root_hash_bytes, 32);
             }
 
-            chain_hash.update(t->message_hash.bytes, 32);
+            commit_hash.update(t->message_hash.bytes, 32);
             // message_hash.update(&mp.rx_time, sizeof(mp.rx_time));
-            chain_hash.finalize(chain_hash_bytes, 32);
+            commit_hash.finalize(commit_hash_bytes, 32);
 
-            // calculate the chain_hash
-            addToChain(t->encapsulated_to, t->encapsulated_from, t->encapsulated_id, false, _channel_hash, t->message.bytes,
-                       t->message.size, t->message_hash.bytes, chain_hash_bytes, root_hash_bytes, t->encapsulated_rxtime, "", 0);
+            // calculate the commit_hash
+            addToChain(t->encapsulated_to, t->encapsulated_from, t->encapsulated_id, _channel_hash, t->message.bytes,
+                       t->message.size, t->message_hash.bytes, commit_hash_bytes, root_hash_bytes, t->encapsulated_rxtime, "", 0);
 
-            canonAnnounce(t->message_hash.bytes, chain_hash_bytes, root_hash_bytes);
+            canonAnnounce(t->message_hash.bytes, commit_hash_bytes, root_hash_bytes, t->encapsulated_rxtime);
 
             LOG_WARN("Attempting to Rebroadcast1");
             meshtastic_MeshPacket *p = router->allocForSending();
@@ -315,11 +350,12 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
             p->encrypted.size = t->message.size;
             memcpy(p->encrypted.bytes, t->message.bytes, t->message.size);
             p->transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA; // only a tiny white lie
-            router->sendLocal(p);
+            service->sendToMesh(p, RX_SRC_RADIO, true);                                       // Send to mesh, cc to phone
+            // router->sendLocal(p);
 
         } else {
-            addToChain(t->encapsulated_to, t->encapsulated_from, t->encapsulated_id, false, _channel_hash, t->message.bytes,
-                       t->message.size, t->message_hash.bytes, t->chain_hash.bytes, t->root_hash.bytes, t->encapsulated_rxtime,
+            addToChain(t->encapsulated_to, t->encapsulated_from, t->encapsulated_id, _channel_hash, t->message.bytes,
+                       t->message.size, t->message_hash.bytes, t->commit_hash.bytes, t->root_hash.bytes, t->encapsulated_rxtime,
                        "", 0);
             if (isInScratch(t->message_hash.bytes)) {
                 // TODO: Copy payload from scratch into chain
@@ -341,9 +377,11 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                 p->encrypted.size = t->message.size;
                 memcpy(p->encrypted.bytes, t->message.bytes, t->message.size);
                 p->transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA; // only a tiny white lie
-                router->sendLocal(p);
+                service->sendToMesh(p, RX_SRC_RADIO, true);                                       // Send to mesh, cc to phone
+
+                // router->sendLocal(p);
             }
-            requestNextMessage(t->root_hash.bytes, t->chain_hash.bytes);
+            requestNextMessage(t->root_hash.bytes, t->commit_hash.bytes);
 
             // check for message hash in scratch
         }
@@ -372,9 +410,9 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
 
     // create a unique-from-nodenums() class that returns a 64-bit value
 
-    SHA256 message_hash, chain_hash;
+    SHA256 message_hash, commit_hash;
     uint8_t message_hash_bytes[32] = {0};
-    uint8_t chain_hash_bytes[32] = {0};
+    uint8_t commit_hash_bytes[32] = {0};
     uint8_t root_hash_bytes[32] = {0};
 
     // For the moment, this is strictly LoRa
@@ -407,9 +445,9 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
 
         if (!portduino_config.sfpp_stratum0) {
             if (!isInDB(message_hash_bytes)) {
-                addToScratch(mp.to, mp.from, mp.id, mp.want_ack, router->p_encrypted->channel,
-                             router->p_encrypted->encrypted.bytes, router->p_encrypted->encrypted.size, message_hash_bytes,
-                             root_hash_bytes, mp.rx_time, (char *)mp.decoded.payload.bytes, mp.decoded.payload.size);
+                addToScratch(mp.to, mp.from, mp.id, router->p_encrypted->channel, router->p_encrypted->encrypted.bytes,
+                             router->p_encrypted->encrypted.size, message_hash_bytes, root_hash_bytes, mp.rx_time,
+                             (char *)mp.decoded.payload.bytes, mp.decoded.payload.size);
                 LOG_WARN("added message to scratch");
                 // send link to upstream?
             }
@@ -419,21 +457,21 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
         // need to resolve the channel hash to the root hash
         getRootFromChannelHash(router->p_encrypted->channel, root_hash_bytes);
         uint8_t last_message_hash[32] = {0};
-        uint8_t last_chain_hash[32] = {0};
+        uint8_t last_commit_hash[32] = {0};
 
-        chain_hash.reset();
+        commit_hash.reset();
 
-        if (getChainEnd(router->p_encrypted->channel, last_chain_hash, last_message_hash)) {
-            printBytes("last message: 0x", last_chain_hash, 32);
-            chain_hash.update(last_chain_hash, 32);
+        if (getChainEnd(router->p_encrypted->channel, last_commit_hash, last_message_hash)) {
+            printBytes("last message: 0x", last_commit_hash, 32);
+            commit_hash.update(last_commit_hash, 32);
         } else {
             printBytes("new chain root: 0x", root_hash_bytes, 32);
-            chain_hash.update(root_hash_bytes, 32);
+            commit_hash.update(root_hash_bytes, 32);
         }
 
-        chain_hash.update(message_hash_bytes, 32);
+        commit_hash.update(message_hash_bytes, 32);
         // message_hash.update(&mp.rx_time, sizeof(mp.rx_time));
-        chain_hash.finalize(chain_hash_bytes, 32);
+        commit_hash.finalize(commit_hash_bytes, 32);
 
         // select HEX(commit_hash),HEX(channel_hash), payload, destination from channel_messages order by rowid desc;
 
@@ -441,12 +479,12 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
 
         // next, the stratum n+1 node needs to tuck messages away and attempt to update stratum 0
 
-        addToChain(mp.to, mp.from, mp.id, mp.want_ack, router->p_encrypted->channel, router->p_encrypted->encrypted.bytes,
-                   router->p_encrypted->encrypted.size, message_hash_bytes, chain_hash_bytes, root_hash_bytes, mp.rx_time,
+        addToChain(mp.to, mp.from, mp.id, router->p_encrypted->channel, router->p_encrypted->encrypted.bytes,
+                   router->p_encrypted->encrypted.size, message_hash_bytes, commit_hash_bytes, root_hash_bytes, mp.rx_time,
                    (char *)mp.decoded.payload.bytes, mp.decoded.payload.size);
 
         // TODO: Limit to 25% bandwidth
-        canonAnnounce(message_hash_bytes, chain_hash_bytes, root_hash_bytes);
+        canonAnnounce(message_hash_bytes, commit_hash_bytes, root_hash_bytes, mp.rx_time);
 
         return ProcessMessage::CONTINUE; // Let others look at this message also if they want
 
@@ -500,13 +538,13 @@ bool StoreForwardPlusPlusModule::getOrAddRootFromChannelHash(ChannelHash _ch_has
         if (portduino_config.sfpp_stratum0) {
             LOG_WARN("Generating Root hash!");
             // generate root hash
-            SHA256 chain_hash;
-            chain_hash.update(&_ch_hash, sizeof(_ch_hash));
+            SHA256 commit_hash;
+            commit_hash.update(&_ch_hash, sizeof(_ch_hash));
             NodeNum ourNode = nodeDB->getNodeNum();
-            chain_hash.update(&ourNode, sizeof(ourNode));
+            commit_hash.update(&ourNode, sizeof(ourNode));
             uint32_t rtc_sec = getValidTime(RTCQuality::RTCQualityDevice, true);
-            chain_hash.update(&rtc_sec, sizeof(rtc_sec));
-            chain_hash.finalize(_root_hash, 32);
+            commit_hash.update(&rtc_sec, sizeof(rtc_sec));
+            commit_hash.finalize(_root_hash, 32);
 
             addRootToMappings(_ch_hash, _root_hash);
             LOG_WARN("here4");
@@ -538,35 +576,41 @@ bool StoreForwardPlusPlusModule::addRootToMappings(ChannelHash _ch_hash, uint8_t
     return true;
 }
 
-bool StoreForwardPlusPlusModule::getChainEnd(ChannelHash _ch_hash, uint8_t *_chain_hash, uint8_t *_message_hash)
+uint32_t StoreForwardPlusPlusModule::getChainEnd(ChannelHash _ch_hash, uint8_t *_commit_hash, uint8_t *_message_hash)
 {
     LOG_WARN("getChainEnd");
+    uint8_t _root_hash[32] = {0};
+    if (!getRootFromChannelHash(_ch_hash, _root_hash)) {
+        LOG_WARN("No root hash found for channel %u", _ch_hash);
+        return 0;
+    }
 
     std::string getEntry_string =
-        "select commit_hash, message_hash from channel_messages where channel_hash=? order by rowid desc LIMIT 1;";
+        "select commit_hash, message_hash, rx_time from channel_messages where root_hash=? order by rowid desc LIMIT 1;";
     sqlite3_stmt *getEntry;
     int rc = sqlite3_prepare_v2(ppDb, getEntry_string.c_str(), getEntry_string.size(), &getEntry, NULL);
-    sqlite3_bind_int(getEntry, 1, _ch_hash);
+    sqlite3_bind_blob(getEntry, 1, _root_hash, 32, NULL);
     sqlite3_step(getEntry);
-    uint8_t *last_message_chain_hash = (uint8_t *)sqlite3_column_blob(getEntry, 0);
+    uint8_t *last_message_commit_hash = (uint8_t *)sqlite3_column_blob(getEntry, 0);
     uint8_t *last_message_hash = (uint8_t *)sqlite3_column_blob(getEntry, 1);
-    if (last_message_chain_hash != nullptr) {
-        memcpy(_chain_hash, last_message_chain_hash, 32);
+    uint32_t _rx_time = sqlite3_column_int(getEntry, 2);
+    if (last_message_commit_hash != nullptr) {
+        memcpy(_commit_hash, last_message_commit_hash, 32);
     }
     if (last_message_hash != nullptr) {
         memcpy(_message_hash, last_message_hash, 32);
     }
-    if (last_message_chain_hash == nullptr || last_message_hash == nullptr) {
+    if (last_message_commit_hash == nullptr || last_message_hash == nullptr) {
         LOG_WARN("Store and Forward++ database lookup returned null");
         sqlite3_finalize(getEntry);
 
-        return false;
+        return 0;
     }
     sqlite3_finalize(getEntry);
-    return true;
+    return _rx_time;
 }
 
-void StoreForwardPlusPlusModule::requestNextMessage(uint8_t *_root_hash, uint8_t *_chain_hash)
+void StoreForwardPlusPlusModule::requestNextMessage(uint8_t *_root_hash, uint8_t *_commit_hash)
 {
 
     meshtastic_StoreForwardPlusPlus storeforward = meshtastic_StoreForwardPlusPlus_init_zero;
@@ -574,8 +618,8 @@ void StoreForwardPlusPlusModule::requestNextMessage(uint8_t *_root_hash, uint8_t
     // set root hash
 
     // set chain hash
-    storeforward.chain_hash.size = 32;
-    memcpy(storeforward.chain_hash.bytes, _chain_hash, 32);
+    storeforward.commit_hash.size = 32;
+    memcpy(storeforward.commit_hash.bytes, _commit_hash, 32);
 
     // set root hash
     storeforward.root_hash.size = 32;
@@ -591,7 +635,7 @@ void StoreForwardPlusPlusModule::requestNextMessage(uint8_t *_root_hash, uint8_t
     service->sendToMesh(p, RX_SRC_LOCAL, true);
 }
 
-bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_chain_hash, uint8_t *next_chain_hash)
+bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_commit_hash, uint8_t *next_commit_hash)
 {
     LOG_WARN("getNextHash");
 
@@ -599,42 +643,42 @@ bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_chai
     LOG_WARN("_channel_hash %u", _channel_hash);
 
     sqlite3_stmt *getHash;
-    int rc = sqlite3_prepare_v2(ppDb, "select commit_hash from channel_messages where channel_hash=? order by rowid ASC;", -1,
+    int rc = sqlite3_prepare_v2(ppDb, "select commit_hash from channel_messages where root_hash=? order by rowid ASC;", -1,
                                 &getHash, NULL);
 
     LOG_WARN("%d", rc);
     if (rc != SQLITE_OK) {
         LOG_WARN("here2 %u, %s", rc, sqlite3_errmsg(ppDb));
     }
-    sqlite3_bind_int(getHash, 1, _channel_hash);
+    sqlite3_bind_blob(getHash, 1, _root_hash, 32, NULL);
 
     bool next_hash = false;
 
     // asking for the first entry on the chain
-    if (memcmp(_root_hash, _chain_hash, 32) == 0) {
+    if (memcmp(_root_hash, _commit_hash, 32) == 0) {
         rc = sqlite3_step(getHash);
         if (rc != SQLITE_OK) {
             LOG_WARN("here2 %u, %s", rc, sqlite3_errmsg(ppDb));
         }
-        uint8_t *tmp_chain_hash = (uint8_t *)sqlite3_column_blob(getHash, 0);
-        printBytes("chain_hash", tmp_chain_hash, 32);
-        memcpy(next_chain_hash, tmp_chain_hash, 32);
+        uint8_t *tmp_commit_hash = (uint8_t *)sqlite3_column_blob(getHash, 0);
+        printBytes("commit_hash", tmp_commit_hash, 32);
+        memcpy(next_commit_hash, tmp_commit_hash, 32);
         next_hash = true;
     } else {
         bool found_hash = false;
 
         LOG_WARN("Looking for next hashes");
-        uint8_t *tmp_chain_hash;
+        uint8_t *tmp_commit_hash;
         while (sqlite3_step(getHash) != SQLITE_DONE) {
-            tmp_chain_hash = (uint8_t *)sqlite3_column_blob(getHash, 0);
+            tmp_commit_hash = (uint8_t *)sqlite3_column_blob(getHash, 0);
 
             if (found_hash) {
                 LOG_WARN("Found hash");
-                memcpy(next_chain_hash, tmp_chain_hash, 32);
+                memcpy(next_commit_hash, tmp_commit_hash, 32);
                 next_hash = true;
                 break;
             }
-            if (memcmp(tmp_chain_hash, _chain_hash, 32) == 0)
+            if (memcmp(tmp_commit_hash, _commit_hash, 32) == 0)
                 found_hash = true;
         }
     }
@@ -643,7 +687,7 @@ bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_chai
     return next_hash;
 }
 
-bool StoreForwardPlusPlusModule::broadcastLink(uint8_t *_chain_hash, uint8_t *_root_hash)
+bool StoreForwardPlusPlusModule::broadcastLink(uint8_t *_commit_hash, uint8_t *_root_hash)
 {
     sqlite3_stmt *getHash;
     int rc = sqlite3_prepare_v2(ppDb, "select destination, sender, packet_id, encrypted_bytes, message_hash, rx_time \
@@ -654,7 +698,7 @@ bool StoreForwardPlusPlusModule::broadcastLink(uint8_t *_chain_hash, uint8_t *_r
     if (rc != SQLITE_OK) {
         LOG_WARN("here2 %u, %s", rc, sqlite3_errmsg(ppDb));
     }
-    sqlite3_bind_blob(getHash, 1, _chain_hash, 32, NULL);
+    sqlite3_bind_blob(getHash, 1, _commit_hash, 32, NULL);
     sqlite3_step(getHash);
 
     meshtastic_StoreForwardPlusPlus storeforward = meshtastic_StoreForwardPlusPlus_init_zero;
@@ -674,8 +718,8 @@ bool StoreForwardPlusPlusModule::broadcastLink(uint8_t *_chain_hash, uint8_t *_r
 
     storeforward.encapsulated_rxtime = sqlite3_column_int(getHash, 5);
 
-    storeforward.chain_hash.size = 32;
-    memcpy(storeforward.chain_hash.bytes, _chain_hash, 32);
+    storeforward.commit_hash.size = 32;
+    memcpy(storeforward.commit_hash.bytes, _commit_hash, 32);
 
     storeforward.root_hash.size = 32;
     memcpy(storeforward.root_hash.bytes, _root_hash, 32);
@@ -740,9 +784,9 @@ bool StoreForwardPlusPlusModule::sendFromScratch(uint8_t _channel_hash)
     return true;
 }
 
-bool StoreForwardPlusPlusModule::addToChain(uint32_t to, uint32_t from, uint32_t id, bool want_ack, ChannelHash channel_hash,
+bool StoreForwardPlusPlusModule::addToChain(uint32_t to, uint32_t from, uint32_t id, ChannelHash channel_hash,
                                             uint8_t *encrypted_bytes, size_t encrypted_len, uint8_t *_message_hash,
-                                            uint8_t *_chain_hash, uint8_t *_root_hash, uint32_t _rx_time, char *payload_bytes,
+                                            uint8_t *_commit_hash, uint8_t *_root_hash, uint32_t _rx_time, char *payload_bytes,
                                             size_t payload_len)
 
 {
@@ -756,29 +800,27 @@ bool StoreForwardPlusPlusModule::addToChain(uint32_t to, uint32_t from, uint32_t
     sqlite3_bind_int(chain_insert_stmt, 2, from);
     // packet_id
     sqlite3_bind_int(chain_insert_stmt, 3, id);
-    // want_ack
-    sqlite3_bind_int(chain_insert_stmt, 4, want_ack);
-    // channel_hash
-    sqlite3_bind_int(chain_insert_stmt, 5, channel_hash);
+    // root_hash
+    sqlite3_bind_blob(chain_insert_stmt, 4, _root_hash, 32, NULL);
     // encrypted_bytes
-    sqlite3_bind_blob(chain_insert_stmt, 6, encrypted_bytes, encrypted_len, NULL);
+    sqlite3_bind_blob(chain_insert_stmt, 5, encrypted_bytes, encrypted_len, NULL);
 
     // message_hash
-    sqlite3_bind_blob(chain_insert_stmt, 7, _message_hash, 32, NULL);
+    sqlite3_bind_blob(chain_insert_stmt, 6, _message_hash, 32, NULL);
     // rx_time
-    sqlite3_bind_int(chain_insert_stmt, 8, _rx_time);
+    sqlite3_bind_int(chain_insert_stmt, 7, _rx_time);
 
     // commit_hash
-    sqlite3_bind_blob(chain_insert_stmt, 9, _chain_hash, 32, NULL);
+    sqlite3_bind_blob(chain_insert_stmt, 8, _commit_hash, 32, NULL);
     // payload
-    sqlite3_bind_text(chain_insert_stmt, 10, payload_bytes, payload_len, NULL);
+    sqlite3_bind_text(chain_insert_stmt, 9, payload_bytes, payload_len, NULL);
 
     sqlite3_step(chain_insert_stmt);
     sqlite3_reset(chain_insert_stmt);
     return true;
 }
 
-bool StoreForwardPlusPlusModule::addToScratch(uint32_t to, uint32_t from, uint32_t id, bool want_ack, ChannelHash channel_hash,
+bool StoreForwardPlusPlusModule::addToScratch(uint32_t to, uint32_t from, uint32_t id, ChannelHash channel_hash,
                                               uint8_t *encrypted_bytes, size_t encrypted_len, uint8_t *_message_hash,
                                               uint8_t *_root_hash, uint32_t _rx_time, char *payload_bytes, size_t payload_len)
 
@@ -792,20 +834,18 @@ bool StoreForwardPlusPlusModule::addToScratch(uint32_t to, uint32_t from, uint32
     sqlite3_bind_int(scratch_insert_stmt, 2, from);
     // packet_id
     sqlite3_bind_int(scratch_insert_stmt, 3, id);
-    // want_ack
-    sqlite3_bind_int(scratch_insert_stmt, 4, want_ack);
-    // channel_hash
-    sqlite3_bind_int(scratch_insert_stmt, 5, channel_hash);
+    // root_hash
+    sqlite3_bind_blob(scratch_insert_stmt, 4, _root_hash, 32, NULL);
     // encrypted_bytes
-    sqlite3_bind_blob(scratch_insert_stmt, 6, encrypted_bytes, encrypted_len, NULL);
+    sqlite3_bind_blob(scratch_insert_stmt, 5, encrypted_bytes, encrypted_len, NULL);
 
     // message_hash
-    sqlite3_bind_blob(scratch_insert_stmt, 7, _message_hash, 32, NULL);
+    sqlite3_bind_blob(scratch_insert_stmt, 6, _message_hash, 32, NULL);
     // rx_time
-    sqlite3_bind_int(scratch_insert_stmt, 8, _rx_time);
+    sqlite3_bind_int(scratch_insert_stmt, 7, _rx_time);
 
     // payload
-    sqlite3_bind_text(scratch_insert_stmt, 9, payload_bytes, payload_len, NULL);
+    sqlite3_bind_text(scratch_insert_stmt, 8, payload_bytes, payload_len, NULL);
     const char *_error_mesg = sqlite3_errmsg(ppDb);
 
     LOG_WARN("step %u, %s", sqlite3_step(scratch_insert_stmt), _error_mesg);
@@ -813,7 +853,8 @@ bool StoreForwardPlusPlusModule::addToScratch(uint32_t to, uint32_t from, uint32
     return true;
 }
 
-void StoreForwardPlusPlusModule::canonAnnounce(uint8_t *_message_hash, uint8_t *_chain_hash, uint8_t *_root_hash)
+void StoreForwardPlusPlusModule::canonAnnounce(uint8_t *_message_hash, uint8_t *_commit_hash, uint8_t *_root_hash,
+                                               uint32_t _rx_time)
 {
     meshtastic_StoreForwardPlusPlus storeforward = meshtastic_StoreForwardPlusPlus_init_zero;
     storeforward.sfpp_message_type = meshtastic_StoreForwardPlusPlus_SFPP_message_type_CANON_ANNOUNCE;
@@ -824,13 +865,14 @@ void StoreForwardPlusPlusModule::canonAnnounce(uint8_t *_message_hash, uint8_t *
     memcpy(storeforward.message_hash.bytes, _message_hash, 32);
 
     // set chain hash
-    storeforward.chain_hash.size = 32;
-    memcpy(storeforward.chain_hash.bytes, _chain_hash, 32);
+    storeforward.commit_hash.size = 32;
+    memcpy(storeforward.commit_hash.bytes, _commit_hash, 32);
 
     // set root hash
     storeforward.root_hash.size = 32;
     memcpy(storeforward.root_hash.bytes, _root_hash, 32);
 
+    storeforward.encapsulated_rxtime = _rx_time;
     // storeforward.
     meshtastic_MeshPacket *p = allocDataProtobuf(storeforward);
     p->to = NODENUM_BROADCAST;
@@ -895,6 +937,32 @@ std::string StoreForwardPlusPlusModule::getPayloadFromScratch(uint8_t *message_h
     size_t payload_len = sqlite3_column_bytes(getPayloadFromScratchStmt, 0);
     std::string tmp_string(tmp_text, payload_len);
     return tmp_string;
+}
+
+StoreForwardPlusPlusModule::link_object StoreForwardPlusPlusModule::getFromScratch(uint8_t *message_hash_bytes, size_t hash_len)
+{
+
+    // vscode wrote this
+    LOG_WARN("getFromScratch");
+    link_object lo;
+
+    sqlite3_bind_blob(fromScratchStmt, 1, message_hash_bytes, hash_len, NULL);
+    auto res = sqlite3_step(fromScratchStmt);
+    const char *_error_mesg = sqlite3_errmsg(ppDb);
+    LOG_WARN("step %u, %s", res, _error_mesg);
+    lo.to = sqlite3_column_int(fromScratchStmt, 0);
+    lo.from = sqlite3_column_int(fromScratchStmt, 1);
+    lo.id = sqlite3_column_int(fromScratchStmt, 2);
+
+    uint8_t *encrypted_bytes = (uint8_t *)sqlite3_column_blob(fromScratchStmt, 3);
+    lo.encrypted_len = sqlite3_column_bytes(fromScratchStmt, 3);
+    memcpy(lo.encrypted_bytes, encrypted_bytes, lo.encrypted_len);
+    uint8_t *message_hash = (uint8_t *)sqlite3_column_blob(fromScratchStmt, 4);
+    memcpy(lo.message_hash, message_hash, 32);
+    lo.rx_time = sqlite3_column_int(fromScratchStmt, 5);
+    lo.channel_hash - sqlite3_column_int(fromScratchStmt, 6);
+    sqlite3_reset(fromScratchStmt);
+    return lo;
 }
 
 // announce latest hash

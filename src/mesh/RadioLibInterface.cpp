@@ -288,6 +288,8 @@ void RadioLibInterface::onNotify(uint32_t notification)
                         // Send any outgoing packets we have ready as fast as possible to keep the time between channel scan and
                         // actual transmission as short as possible
                         txp = txQueue.dequeue();
+                        LOG_WARN("Outgoing packet");
+                        printPacket("Starting send", txp);
                         assert(txp);
                         startSend(txp);
                         LOG_DEBUG("%d packets remain in the TX queue", txQueue.getMaxLen() - txQueue.getFree());

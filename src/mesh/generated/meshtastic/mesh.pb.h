@@ -794,14 +794,14 @@ typedef struct _meshtastic_KeyVerification {
 } meshtastic_KeyVerification;
 
 typedef PB_BYTES_ARRAY_T(32) meshtastic_StoreForwardPlusPlus_message_hash_t;
-typedef PB_BYTES_ARRAY_T(32) meshtastic_StoreForwardPlusPlus_chain_hash_t;
+typedef PB_BYTES_ARRAY_T(32) meshtastic_StoreForwardPlusPlus_commit_hash_t;
 typedef PB_BYTES_ARRAY_T(32) meshtastic_StoreForwardPlusPlus_root_hash_t;
 typedef PB_BYTES_ARRAY_T(240) meshtastic_StoreForwardPlusPlus_message_t;
 /* The actual over-the-mesh message doing store and forward++ */
 typedef struct _meshtastic_StoreForwardPlusPlus { /*  */
     meshtastic_StoreForwardPlusPlus_SFPP_message_type sfpp_message_type;
     meshtastic_StoreForwardPlusPlus_message_hash_t message_hash;
-    meshtastic_StoreForwardPlusPlus_chain_hash_t chain_hash;
+    meshtastic_StoreForwardPlusPlus_commit_hash_t commit_hash;
     meshtastic_StoreForwardPlusPlus_root_hash_t root_hash;
     /* encapsulated message to share (may be split in half) */
     meshtastic_StoreForwardPlusPlus_message_t message;
@@ -1528,7 +1528,7 @@ extern "C" {
 #define meshtastic_KeyVerification_hash2_tag     3
 #define meshtastic_StoreForwardPlusPlus_sfpp_message_type_tag 1
 #define meshtastic_StoreForwardPlusPlus_message_hash_tag 2
-#define meshtastic_StoreForwardPlusPlus_chain_hash_tag 3
+#define meshtastic_StoreForwardPlusPlus_commit_hash_tag 3
 #define meshtastic_StoreForwardPlusPlus_root_hash_tag 4
 #define meshtastic_StoreForwardPlusPlus_message_tag 5
 #define meshtastic_StoreForwardPlusPlus_encapsulated_id_tag 6
@@ -1754,7 +1754,7 @@ X(a, STATIC,   SINGULAR, BYTES,    hash2,             3)
 #define meshtastic_StoreForwardPlusPlus_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, UENUM,    sfpp_message_type,   1) \
 X(a, STATIC,   SINGULAR, BYTES,    message_hash,      2) \
-X(a, STATIC,   SINGULAR, BYTES,    chain_hash,        3) \
+X(a, STATIC,   SINGULAR, BYTES,    commit_hash,       3) \
 X(a, STATIC,   SINGULAR, BYTES,    root_hash,         4) \
 X(a, STATIC,   SINGULAR, BYTES,    message,           5) \
 X(a, STATIC,   SINGULAR, UINT32,   encapsulated_id,   6) \
