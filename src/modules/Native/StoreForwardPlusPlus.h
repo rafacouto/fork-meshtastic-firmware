@@ -16,7 +16,7 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
         uint32_t id;
         uint32_t rx_time;
         ChannelHash channel_hash;
-        uint8_t *encrypted_bytes;
+        uint8_t encrypted_bytes[256] = {0};
         size_t encrypted_len;
         uint8_t message_hash[32] = {0};
         uint8_t root_hash[32] = {0};
