@@ -6,6 +6,8 @@
 
 // TODO: non-stratum0 nodes need to be pointed at their upstream source? Maybe
 
+// TODO: Work without sending some of the hashes/ short hashes
+
 // things may get weird if there are multiple stratum-0 nodes on a single mesh. Come up with mitigations
 
 // Basic design:
@@ -142,6 +144,10 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
         encrypted_bytes, message_hash, rx_time, payload) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);",
                        -1, &scratch_insert_stmt, NULL);
 
+    sqlite3_prepare_v2(ppDb, "select destination, sender, packet_id, encrypted_bytes, message_hash, rx_time \
+        from local_messages where channel_hash=? order by rx_time desc LIMIT 1;", // earliest first
+                       -1, &fromScratchStmt, NULL);
+
     sqlite3_prepare_v2(ppDb, "SELECT COUNT(*) from channel_messages where message_hash=?", -1, &checkDup, NULL);
 
     sqlite3_prepare_v2(ppDb, "SELECT COUNT(*) from local_messages where message_hash=?", -1, &checkScratch, NULL);
@@ -195,7 +201,13 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
 
         if (portduino_config.sfpp_stratum0) {
             LOG_WARN("Received a CANON_ANNOUNCE while stratum 0");
-            // honestly this is fine, and if the announce is not end of chain, just treat it like a request for next
+            uint8_t next_chain_hash[32] = {0};
+
+            if (getNextHash(t->root_hash.bytes, t->chain_hash.bytes, next_chain_hash)) {
+                printBytes("next chain hash: ", next_chain_hash, 32);
+
+                broadcastLink(next_chain_hash, t->root_hash.bytes);
+            }
         } else {
             uint8_t tmp_root_hash_bytes[32] = {0};
 
@@ -220,6 +232,7 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
             if (getChainEnd(router->p_encrypted->channel, last_message_chain_hash, last_message_hash)) {
                 if (memcmp(last_message_chain_hash, t->chain_hash.bytes, 32) == 0) {
                     LOG_WARN("End of chain matches!");
+                    sendFromScratch(router->p_encrypted->channel);
                     // TODO: Send a message from the local queue
                 } else {
                     // TODO: Check for a matching message in the scratch, and do this automatically if possible
@@ -251,15 +264,59 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
 
         //
         if (portduino_config.sfpp_stratum0) {
-            // check for message_hash in db
+            if (isInDB(t->message_hash.bytes)) {
+                LOG_WARN("Received link already in chain");
+                // TODO: respond with last link?
+            }
+            uint8_t root_hash_bytes[32] = {0};
+
+            if (!getRootFromChannelHash(router->p_encrypted->channel, root_hash_bytes)) {
+                LOG_WARN("Hash bytes not found for incoming link");
+                return true;
+            }
+
+            if (t->root_hash.size != 32 || memcmp(root_hash_bytes, t->root_hash.bytes, 32) != 0) {
+                LOG_WARN("Hash bytes mismatch for incoming link");
+                return true;
+            }
+            SHA256 chain_hash;
+            uint8_t last_message_hash[32] = {0};
+            uint8_t last_chain_hash[32] = {0};
+            uint8_t chain_hash_bytes[32] = {0};
+
+            chain_hash.reset();
+
+            if (getChainEnd(router->p_encrypted->channel, last_chain_hash, last_message_hash)) {
+                printBytes("last message: 0x", last_chain_hash, 32);
+                chain_hash.update(last_chain_hash, 32);
+            } else {
+                printBytes("new chain root: 0x", root_hash_bytes, 32);
+                chain_hash.update(root_hash_bytes, 32);
+            }
+
+            chain_hash.update(t->message_hash.bytes, 32);
+            // message_hash.update(&mp.rx_time, sizeof(mp.rx_time));
+            chain_hash.finalize(chain_hash_bytes, 32);
+
             // calculate the chain_hash
             LOG_ERROR("TODO calculate chain");
             addToChain(t->encapsulated_to, t->encapsulated_from, t->encapsulated_id, false, _channel_hash, t->message.bytes,
-                       t->message.size, t->message_hash.bytes, t->chain_hash.bytes, t->root_hash.bytes, t->encapsulated_rxtime,
-                       "", 0);
-            // auto pAck = routingModule->allocAckNak(meshtastic_Routing_Error_NONE, getFrom(e.packet), e.packet->id, ch.index);
-            // pAck->transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT;
-            // router->sendLocal(pAck);
+                       t->message.size, t->message_hash.bytes, chain_hash_bytes, root_hash_bytes, t->encapsulated_rxtime, "", 0);
+
+            canonAnnounce(t->message_hash.bytes, chain_hash_bytes, root_hash_bytes);
+
+            LOG_WARN("Attempting to Rebroadcast");
+            meshtastic_MeshPacket *p = router->allocForSending();
+            p->to = t->encapsulated_to;
+            p->from = t->encapsulated_from;
+            p->id = t->encapsulated_id;
+            p->channel = _channel_hash;
+            p->which_payload_variant = meshtastic_MeshPacket_encrypted_tag;
+            p->encrypted.size = t->message.size;
+            memcpy(p->encrypted.bytes, t->message.bytes, t->message.size);
+            p->transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA; // only a tiny white lie
+            router->sendLocal(p);
+
         } else {
             addToChain(t->encapsulated_to, t->encapsulated_from, t->encapsulated_id, false, _channel_hash, t->message.bytes,
                        t->message.size, t->message_hash.bytes, t->chain_hash.bytes, t->root_hash.bytes, t->encapsulated_rxtime,
@@ -368,7 +425,7 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
 
         if (getChainEnd(router->p_encrypted->channel, last_chain_hash, last_message_hash)) {
             printBytes("last message: 0x", last_chain_hash, 32);
-            chain_hash.update(last_message_hash, 32);
+            chain_hash.update(last_chain_hash, 32);
         } else {
             printBytes("new chain root: 0x", root_hash_bytes, 32);
             chain_hash.update(root_hash_bytes, 32);
@@ -636,6 +693,54 @@ bool StoreForwardPlusPlusModule::broadcastLink(uint8_t *_chain_hash, uint8_t *_r
     memcpy(storeforward.root_hash.bytes, _root_hash, 32);
 
     sqlite3_finalize(getHash);
+
+    meshtastic_MeshPacket *p = allocDataProtobuf(storeforward);
+    p->to = NODENUM_BROADCAST;
+    p->decoded.want_response = false;
+    p->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
+    p->channel = 0;
+    LOG_INFO("Send link to mesh");
+    service->sendToMesh(p, RX_SRC_LOCAL, true);
+    return true;
+}
+
+bool StoreForwardPlusPlusModule::sendFromScratch(uint8_t _channel_hash)
+{
+
+    //    "select destination, sender, packet_id, channel_hash, encrypted_bytes, message_hash, rx_time \
+    //    from local_messages order by rx_time desc LIMIT 1;"
+    sqlite3_bind_int(fromScratchStmt, 1, _channel_hash);
+    if (sqlite3_step(fromScratchStmt) == SQLITE_DONE) {
+        LOG_WARN("No messages in scratch to forward");
+        return false;
+    }
+    uint8_t _root_hash[32] = {0};
+    if (!getRootFromChannelHash(_channel_hash, _root_hash)) {
+        LOG_ERROR("Error getting root hash");
+        return false;
+    }
+
+    meshtastic_StoreForwardPlusPlus storeforward = meshtastic_StoreForwardPlusPlus_init_zero;
+    storeforward.sfpp_message_type = meshtastic_StoreForwardPlusPlus_SFPP_message_type_LINK_PROVIDE;
+
+    storeforward.encapsulated_to = sqlite3_column_int(fromScratchStmt, 0);
+    storeforward.encapsulated_from = sqlite3_column_int(fromScratchStmt, 1);
+    storeforward.encapsulated_id = sqlite3_column_int(fromScratchStmt, 2);
+
+    uint8_t *_encrypted = (uint8_t *)sqlite3_column_blob(fromScratchStmt, 3);
+    storeforward.message.size = sqlite3_column_bytes(fromScratchStmt, 3);
+    memcpy(storeforward.message.bytes, _encrypted, storeforward.message.size);
+
+    uint8_t *_message_hash = (uint8_t *)sqlite3_column_blob(fromScratchStmt, 4);
+    storeforward.message_hash.size = 32;
+    memcpy(storeforward.message_hash.bytes, _message_hash, storeforward.message_hash.size);
+
+    storeforward.encapsulated_rxtime = sqlite3_column_int(fromScratchStmt, 5);
+
+    storeforward.root_hash.size = 32;
+    memcpy(storeforward.root_hash.bytes, _root_hash, 32);
+
+    sqlite3_finalize(fromScratchStmt);
 
     meshtastic_MeshPacket *p = allocDataProtobuf(storeforward);
     p->to = NODENUM_BROADCAST;

@@ -51,6 +51,7 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
     sqlite3_stmt *removeScratch;
     sqlite3_stmt *updatePayloadStmt;
     sqlite3_stmt *getPayloadFromScratchStmt;
+    sqlite3_stmt *fromScratchStmt;
 
     // returns wasfound
     bool getRootFromChannelHash(ChannelHash, uint8_t *);
@@ -70,6 +71,8 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
     void requestNextMessage(uint8_t *, uint8_t *);
 
     bool broadcastLink(uint8_t *, uint8_t *);
+
+    bool sendFromScratch(uint8_t);
 
     bool addToChain(uint32_t, uint32_t, uint32_t, bool, ChannelHash, uint8_t *, size_t, uint8_t *, uint8_t *, uint8_t *, uint32_t,
                     char *, size_t);
