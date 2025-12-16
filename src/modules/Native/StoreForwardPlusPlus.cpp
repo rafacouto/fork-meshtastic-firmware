@@ -145,7 +145,8 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
         from local_messages where channel_hash=? order by rx_time asc LIMIT 1;", // earliest first
                        -1, &fromScratchStmt, NULL);
 
-    sqlite3_prepare_v2(ppDb, "select destination, sender, packet_id, encrypted_bytes, message_hash, rx_time, channel_hash \
+    sqlite3_prepare_v2(ppDb,
+                       "select destination, sender, packet_id, encrypted_bytes, message_hash, rx_time, channel_hash, payload \
         from local_messages where message_hash=? order by rx_time asc LIMIT 1;", // earliest first
                        -1, &fromScratchByHashStmt, NULL);
 
@@ -244,7 +245,6 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                     sendFromScratch(router->p_encrypted->channel);
                     // TODO: Send a message from the local queue
                 } else {
-                    // TODO: Check for a matching message in the scratch, and do this automatically if possible
                     ("End of chain does not match!");
                     if (isInScratch(t->message_hash.bytes)) {
 
@@ -966,6 +966,8 @@ StoreForwardPlusPlusModule::link_object StoreForwardPlusPlusModule::getFromScrat
     memcpy(lo.message_hash, message_hash, 32);
     lo.rx_time = sqlite3_column_int(fromScratchByHashStmt, 5);
     lo.channel_hash - sqlite3_column_int(fromScratchByHashStmt, 6);
+    lo.payload =
+        std::string((char *)sqlite3_column_text(fromScratchByHashStmt, 7), sqlite3_column_bytes(fromScratchByHashStmt, 7));
     sqlite3_reset(fromScratchByHashStmt);
     return lo;
 }
