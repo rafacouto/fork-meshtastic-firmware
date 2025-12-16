@@ -178,12 +178,13 @@ int32_t StoreForwardPlusPlusModule::runOnce()
     // get tip of chain for this channel
     uint8_t last_message_chain_hash[32] = {0};
     uint8_t last_message_hash[32] = {0};
-    LOG_WARN("here5");
 
     if (!getChainEnd(hash, last_message_chain_hash, last_message_hash)) {
         LOG_WARN("Store and Forward++ database lookup returned null");
         return 60 * 60 * 1000;
     }
+
+    // if we have something in scratch, maybe send it rather then announce?
 
     canonAnnounce(last_message_hash, last_message_chain_hash, root_hash_bytes);
 
@@ -299,7 +300,6 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
             chain_hash.finalize(chain_hash_bytes, 32);
 
             // calculate the chain_hash
-            LOG_ERROR("TODO calculate chain");
             addToChain(t->encapsulated_to, t->encapsulated_from, t->encapsulated_id, false, _channel_hash, t->message.bytes,
                        t->message.size, t->message_hash.bytes, chain_hash_bytes, root_hash_bytes, t->encapsulated_rxtime, "", 0);
 
@@ -627,7 +627,6 @@ bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_chai
         uint8_t *tmp_chain_hash;
         while (sqlite3_step(getHash) != SQLITE_DONE) {
             tmp_chain_hash = (uint8_t *)sqlite3_column_blob(getHash, 0);
-            printBytes("chain_hash", tmp_chain_hash, 32);
 
             if (found_hash) {
                 LOG_WARN("Found hash");
@@ -695,7 +694,7 @@ bool StoreForwardPlusPlusModule::broadcastLink(uint8_t *_chain_hash, uint8_t *_r
 
 bool StoreForwardPlusPlusModule::sendFromScratch(uint8_t _channel_hash)
 {
-
+    LOG_WARN("sendFromScratch");
     //    "select destination, sender, packet_id, channel_hash, encrypted_bytes, message_hash, rx_time \
     //    from local_messages order by rx_time desc LIMIT 1;"
     sqlite3_bind_int(fromScratchStmt, 1, _channel_hash);
