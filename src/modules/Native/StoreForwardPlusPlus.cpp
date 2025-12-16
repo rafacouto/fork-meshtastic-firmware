@@ -305,7 +305,7 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
 
             canonAnnounce(t->message_hash.bytes, chain_hash_bytes, root_hash_bytes);
 
-            LOG_WARN("Attempting to Rebroadcast");
+            LOG_WARN("Attempting to Rebroadcast1");
             meshtastic_MeshPacket *p = router->allocForSending();
             p->to = t->encapsulated_to;
             p->from = t->encapsulated_from;
@@ -331,7 +331,7 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
             } else {
                 // TODO: compare the time, and don't rebroadcast really old messages
                 // if this packet is new to us, we rebroadcast it
-                LOG_WARN("Attempting to Rebroadcast");
+                LOG_WARN("Attempting to Rebroadcast2");
                 meshtastic_MeshPacket *p = router->allocForSending();
                 p->to = t->encapsulated_to;
                 p->from = t->encapsulated_from;
@@ -728,7 +728,7 @@ bool StoreForwardPlusPlusModule::sendFromScratch(uint8_t _channel_hash)
     storeforward.root_hash.size = 32;
     memcpy(storeforward.root_hash.bytes, _root_hash, 32);
 
-    sqlite3_finalize(fromScratchStmt);
+    sqlite3_reset(fromScratchStmt);
 
     meshtastic_MeshPacket *p = allocDataProtobuf(storeforward);
     p->to = NODENUM_BROADCAST;
