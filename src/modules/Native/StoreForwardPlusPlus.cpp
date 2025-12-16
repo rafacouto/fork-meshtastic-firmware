@@ -145,7 +145,7 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
                        -1, &scratch_insert_stmt, NULL);
 
     sqlite3_prepare_v2(ppDb, "select destination, sender, packet_id, encrypted_bytes, message_hash, rx_time \
-        from local_messages where channel_hash=? order by rx_time desc LIMIT 1;", // earliest first
+        from local_messages where channel_hash=? order by rx_time asc LIMIT 1;", // earliest first
                        -1, &fromScratchStmt, NULL);
 
     sqlite3_prepare_v2(ppDb, "SELECT COUNT(*) from channel_messages where message_hash=?", -1, &checkDup, NULL);
@@ -531,12 +531,10 @@ bool StoreForwardPlusPlusModule::addRootToMappings(ChannelHash _ch_hash, uint8_t
     sqlite3_bind_int(getHash, 1, type);
     sqlite3_bind_int(getHash, 2, _ch_hash);
     sqlite3_bind_blob(getHash, 3, _root_hash, 32, NULL);
-    LOG_WARN("here1");
     // sqlite3_bind_int(getHash, 4, nodeToAdd);
     rc = sqlite3_step(getHash);
-    LOG_WARN("here2 %u, %s", rc, sqlite3_errmsg(ppDb));
+    LOG_WARN("result %u, %s", rc, sqlite3_errmsg(ppDb));
     sqlite3_finalize(getHash);
-    LOG_WARN("here3");
     return true;
 }
 
@@ -552,27 +550,18 @@ bool StoreForwardPlusPlusModule::getChainEnd(ChannelHash _ch_hash, uint8_t *_cha
     sqlite3_step(getEntry);
     uint8_t *last_message_chain_hash = (uint8_t *)sqlite3_column_blob(getEntry, 0);
     uint8_t *last_message_hash = (uint8_t *)sqlite3_column_blob(getEntry, 1);
-    LOG_WARN("herex");
     if (last_message_chain_hash != nullptr) {
-        LOG_WARN("herex");
-
         memcpy(_chain_hash, last_message_chain_hash, 32);
     }
     if (last_message_hash != nullptr) {
-        LOG_WARN("herex");
-
         memcpy(_message_hash, last_message_hash, 32);
     }
-    LOG_WARN("herex");
-
     if (last_message_chain_hash == nullptr || last_message_hash == nullptr) {
         LOG_WARN("Store and Forward++ database lookup returned null");
         sqlite3_finalize(getEntry);
 
         return false;
     }
-    LOG_WARN("herey");
-
     sqlite3_finalize(getEntry);
     return true;
 }
