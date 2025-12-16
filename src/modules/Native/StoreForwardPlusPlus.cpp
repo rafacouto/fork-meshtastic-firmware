@@ -145,6 +145,10 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
         from local_messages where channel_hash=? order by rx_time asc LIMIT 1;", // earliest first
                        -1, &fromScratchStmt, NULL);
 
+    sqlite3_prepare_v2(ppDb, "select destination, sender, packet_id, encrypted_bytes, message_hash, rx_time, channel_hash \
+        from local_messages where message_hash=? order by rx_time asc LIMIT 1;", // earliest first
+                       -1, &fromScratchByHashStmt, NULL);
+
     sqlite3_prepare_v2(ppDb, "SELECT COUNT(*) from channel_messages where message_hash=?", -1, &checkDup, NULL);
 
     sqlite3_prepare_v2(ppDb, "SELECT COUNT(*) from local_messages where message_hash=?", -1, &checkScratch, NULL);
@@ -947,22 +951,22 @@ StoreForwardPlusPlusModule::link_object StoreForwardPlusPlusModule::getFromScrat
     LOG_WARN("getFromScratch");
     link_object lo;
 
-    sqlite3_bind_blob(fromScratchStmt, 1, message_hash_bytes, hash_len, NULL);
-    auto res = sqlite3_step(fromScratchStmt);
+    sqlite3_bind_blob(fromScratchByHashStmt, 1, message_hash_bytes, hash_len, NULL);
+    auto res = sqlite3_step(fromScratchByHashStmt);
     const char *_error_mesg = sqlite3_errmsg(ppDb);
     LOG_WARN("step %u, %s", res, _error_mesg);
-    lo.to = sqlite3_column_int(fromScratchStmt, 0);
-    lo.from = sqlite3_column_int(fromScratchStmt, 1);
-    lo.id = sqlite3_column_int(fromScratchStmt, 2);
+    lo.to = sqlite3_column_int(fromScratchByHashStmt, 0);
+    lo.from = sqlite3_column_int(fromScratchByHashStmt, 1);
+    lo.id = sqlite3_column_int(fromScratchByHashStmt, 2);
 
-    uint8_t *encrypted_bytes = (uint8_t *)sqlite3_column_blob(fromScratchStmt, 3);
-    lo.encrypted_len = sqlite3_column_bytes(fromScratchStmt, 3);
+    uint8_t *encrypted_bytes = (uint8_t *)sqlite3_column_blob(fromScratchByHashStmt, 3);
+    lo.encrypted_len = sqlite3_column_bytes(fromScratchByHashStmt, 3);
     memcpy(lo.encrypted_bytes, encrypted_bytes, lo.encrypted_len);
-    uint8_t *message_hash = (uint8_t *)sqlite3_column_blob(fromScratchStmt, 4);
+    uint8_t *message_hash = (uint8_t *)sqlite3_column_blob(fromScratchByHashStmt, 4);
     memcpy(lo.message_hash, message_hash, 32);
-    lo.rx_time = sqlite3_column_int(fromScratchStmt, 5);
-    lo.channel_hash - sqlite3_column_int(fromScratchStmt, 6);
-    sqlite3_reset(fromScratchStmt);
+    lo.rx_time = sqlite3_column_int(fromScratchByHashStmt, 5);
+    lo.channel_hash - sqlite3_column_int(fromScratchByHashStmt, 6);
+    sqlite3_reset(fromScratchByHashStmt);
     return lo;
 }
 

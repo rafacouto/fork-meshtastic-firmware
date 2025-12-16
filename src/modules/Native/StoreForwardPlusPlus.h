@@ -66,6 +66,7 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
     sqlite3_stmt *updatePayloadStmt;
     sqlite3_stmt *getPayloadFromScratchStmt;
     sqlite3_stmt *fromScratchStmt;
+    sqlite3_stmt *fromScratchByHashStmt;
 
     // returns wasfound
     bool getRootFromChannelHash(ChannelHash, uint8_t *);
