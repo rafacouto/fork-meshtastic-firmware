@@ -439,6 +439,7 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
 
         if (isInDB(message_hash_bytes)) {
             LOG_WARN("found message in db");
+            updatePayload(message_hash_bytes, (char *)mp.decoded.payload.bytes, mp.decoded.payload.size);
             // TODO: For this iteration, we should check if the text payload is present in the db, and update it if not
             return ProcessMessage::CONTINUE;
         }
