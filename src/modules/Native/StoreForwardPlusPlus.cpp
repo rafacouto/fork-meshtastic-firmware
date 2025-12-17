@@ -158,6 +158,16 @@ StoreForwardPlusPlusModule::StoreForwardPlusPlusModule()
 
     sqlite3_prepare_v2(ppDb, "UPDATE channel_messages SET payload=? WHERE message_hash=?", -1, &updatePayloadStmt, NULL);
 
+    sqlite3_prepare_v2(ppDb, "select commit_hash from channel_messages where root_hash=? order by rowid ASC;", -1,
+                       &getNextHashStmt, NULL);
+
+    sqlite3_prepare_v2(
+        ppDb, "select commit_hash, message_hash, rx_time from channel_messages where root_hash=? order by rowid desc LIMIT 1;",
+        -1, &getChainEndStmt, NULL);
+
+    sqlite3_prepare_v2(ppDb, "select destination, sender, packet_id, encrypted_bytes, message_hash, rx_time \
+        from channel_messages where commit_hash=?;",
+                       -1, &getLinkStmt, NULL);
     encryptedOk = true;
 
     // wait about 15 seconds after boot for the first runOnce()
@@ -455,15 +465,12 @@ uint32_t StoreForwardPlusPlusModule::getChainEnd(ChannelHash _ch_hash, uint8_t *
         return 0;
     }
 
-    std::string getEntry_string =
-        "select commit_hash, message_hash, rx_time from channel_messages where root_hash=? order by rowid desc LIMIT 1;";
-    sqlite3_stmt *getEntry;
-    int rc = sqlite3_prepare_v2(ppDb, getEntry_string.c_str(), getEntry_string.size(), &getEntry, NULL);
-    sqlite3_bind_blob(getEntry, 1, _root_hash, 32, NULL);
-    sqlite3_step(getEntry);
-    uint8_t *last_message_commit_hash = (uint8_t *)sqlite3_column_blob(getEntry, 0);
-    uint8_t *last_message_hash = (uint8_t *)sqlite3_column_blob(getEntry, 1);
-    uint32_t _rx_time = sqlite3_column_int(getEntry, 2);
+    int rc;
+    sqlite3_bind_blob(getChainEndStmt, 1, _root_hash, 32, NULL);
+    sqlite3_step(getChainEndStmt);
+    uint8_t *last_message_commit_hash = (uint8_t *)sqlite3_column_blob(getChainEndStmt, 0);
+    uint8_t *last_message_hash = (uint8_t *)sqlite3_column_blob(getChainEndStmt, 1);
+    uint32_t _rx_time = sqlite3_column_int(getChainEndStmt, 2);
     if (last_message_commit_hash != nullptr) {
         memcpy(_commit_hash, last_message_commit_hash, 32);
     }
@@ -472,11 +479,11 @@ uint32_t StoreForwardPlusPlusModule::getChainEnd(ChannelHash _ch_hash, uint8_t *
     }
     if (last_message_commit_hash == nullptr || last_message_hash == nullptr) {
         LOG_WARN("Store and Forward++ database lookup returned null");
-        sqlite3_finalize(getEntry);
+        sqlite3_reset(getChainEndStmt);
 
         return 0;
     }
-    sqlite3_finalize(getEntry);
+    sqlite3_reset(getChainEndStmt);
     return _rx_time;
 }
 
@@ -512,25 +519,18 @@ bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_comm
     ChannelHash _channel_hash = getChannelHashFromRoot(_root_hash);
     LOG_WARN("_channel_hash %u", _channel_hash);
 
-    sqlite3_stmt *getHash;
-    int rc = sqlite3_prepare_v2(ppDb, "select commit_hash from channel_messages where root_hash=? order by rowid ASC;", -1,
-                                &getHash, NULL);
-
-    LOG_WARN("%d", rc);
-    if (rc != SQLITE_OK) {
-        LOG_WARN("here2 %u, %s", rc, sqlite3_errmsg(ppDb));
-    }
-    sqlite3_bind_blob(getHash, 1, _root_hash, 32, NULL);
+    int rc;
+    sqlite3_bind_blob(getNextHashStmt, 1, _root_hash, 32, NULL);
 
     bool next_hash = false;
 
     // asking for the first entry on the chain
     if (memcmp(_root_hash, _commit_hash, 32) == 0) {
-        rc = sqlite3_step(getHash);
+        rc = sqlite3_step(getNextHashStmt);
         if (rc != SQLITE_OK) {
             LOG_WARN("here2 %u, %s", rc, sqlite3_errmsg(ppDb));
         }
-        uint8_t *tmp_commit_hash = (uint8_t *)sqlite3_column_blob(getHash, 0);
+        uint8_t *tmp_commit_hash = (uint8_t *)sqlite3_column_blob(getNextHashStmt, 0);
         printBytes("commit_hash", tmp_commit_hash, 32);
         memcpy(next_commit_hash, tmp_commit_hash, 32);
         next_hash = true;
@@ -539,8 +539,8 @@ bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_comm
 
         LOG_WARN("Looking for next hashes");
         uint8_t *tmp_commit_hash;
-        while (sqlite3_step(getHash) != SQLITE_DONE) {
-            tmp_commit_hash = (uint8_t *)sqlite3_column_blob(getHash, 0);
+        while (sqlite3_step(getNextHashStmt) != SQLITE_DONE) {
+            tmp_commit_hash = (uint8_t *)sqlite3_column_blob(getNextHashStmt, 0);
 
             if (found_hash) {
                 LOG_WARN("Found hash");
@@ -553,48 +553,44 @@ bool StoreForwardPlusPlusModule::getNextHash(uint8_t *_root_hash, uint8_t *_comm
         }
     }
 
-    sqlite3_finalize(getHash);
+    sqlite3_reset(getNextHashStmt);
     return next_hash;
 }
 
 bool StoreForwardPlusPlusModule::broadcastLink(uint8_t *_commit_hash, uint8_t *_root_hash)
 {
-    sqlite3_stmt *getHash;
-    int rc = sqlite3_prepare_v2(ppDb, "select destination, sender, packet_id, encrypted_bytes, message_hash, rx_time \
-        from channel_messages where commit_hash=?;",
-                                -1, &getHash, NULL);
+    int rc;
 
     LOG_WARN("%d", rc);
     if (rc != SQLITE_OK) {
         LOG_WARN("here2 %u, %s", rc, sqlite3_errmsg(ppDb));
     }
-    sqlite3_bind_blob(getHash, 1, _commit_hash, 32, NULL);
-    sqlite3_step(getHash);
+    sqlite3_bind_blob(getLinkStmt, 1, _commit_hash, 32, NULL);
+    sqlite3_step(getLinkStmt);
 
     meshtastic_StoreForwardPlusPlus storeforward = meshtastic_StoreForwardPlusPlus_init_zero;
     storeforward.sfpp_message_type = meshtastic_StoreForwardPlusPlus_SFPP_message_type_LINK_PROVIDE;
 
-    storeforward.encapsulated_to = sqlite3_column_int(getHash, 0);
-    storeforward.encapsulated_from = sqlite3_column_int(getHash, 1);
-    storeforward.encapsulated_id = sqlite3_column_int(getHash, 2);
+    storeforward.encapsulated_to = sqlite3_column_int(getLinkStmt, 0);
+    storeforward.encapsulated_from = sqlite3_column_int(getLinkStmt, 1);
+    storeforward.encapsulated_id = sqlite3_column_int(getLinkStmt, 2);
 
-    uint8_t *_payload = (uint8_t *)sqlite3_column_blob(getHash, 3);
-    storeforward.message.size = sqlite3_column_bytes(getHash, 3);
+    uint8_t *_payload = (uint8_t *)sqlite3_column_blob(getLinkStmt, 3);
+    storeforward.message.size = sqlite3_column_bytes(getLinkStmt, 3);
     memcpy(storeforward.message.bytes, _payload, storeforward.message.size);
 
-    uint8_t *_message_hash = (uint8_t *)sqlite3_column_blob(getHash, 4);
+    uint8_t *_message_hash = (uint8_t *)sqlite3_column_blob(getLinkStmt, 4);
     storeforward.message_hash.size = 32;
     memcpy(storeforward.message_hash.bytes, _message_hash, storeforward.message_hash.size);
 
-    storeforward.encapsulated_rxtime = sqlite3_column_int(getHash, 5);
-
+    storeforward.encapsulated_rxtime = sqlite3_column_int(getLinkStmt, 5);
     storeforward.commit_hash.size = 32;
     memcpy(storeforward.commit_hash.bytes, _commit_hash, 32);
 
     storeforward.root_hash.size = 32;
     memcpy(storeforward.root_hash.bytes, _root_hash, 32);
 
-    sqlite3_finalize(getHash);
+    sqlite3_reset(getLinkStmt);
 
     meshtastic_MeshPacket *p = allocDataProtobuf(storeforward);
     p->to = NODENUM_BROADCAST;
