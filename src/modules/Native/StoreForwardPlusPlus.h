@@ -92,9 +92,9 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
     bool sendFromScratch(uint8_t);
 
     bool addToChain(link_object &);
-    bool addToChain(uint32_t, uint32_t, uint32_t, ChannelHash, uint8_t *, size_t, uint8_t *, uint8_t *, uint8_t *, uint32_t,
-                    char *, size_t);
+
     bool addToScratch(link_object &);
+
     void canonAnnounce(uint8_t *, uint8_t *, uint8_t *, uint32_t);
 
     bool isInDB(uint8_t *);
@@ -113,6 +113,8 @@ class StoreForwardPlusPlusModule : public ProtobufModule<meshtastic_StoreForward
     link_object ingestLinkMessage(meshtastic_StoreForwardPlusPlus *);
 
     void rebroadcastLinkObject(link_object &);
+
+    bool checkCommitHash(link_object &lo, uint8_t *commit_hash_bytes, size_t hash_len);
 
     enum chain_types {
         channel_chain = 0,

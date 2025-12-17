@@ -194,11 +194,6 @@ int32_t StoreForwardPlusPlusModule::runOnce()
 
 bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshtastic_StoreForwardPlusPlus *t)
 {
-    SHA256 commit_hash;
-    uint8_t last_message_hash[32] = {0};
-    uint8_t last_commit_hash[32] = {0};
-    uint8_t commit_hash_bytes[32] = {0};
-
     LOG_WARN("in handleReceivedProtobuf");
     LOG_WARN("Sfp++ node %u sent us sf++ packet", mp.from);
     printBytes("commit_hash ", t->commit_hash.bytes, t->commit_hash.size);
@@ -244,28 +239,15 @@ bool StoreForwardPlusPlusModule::handleReceivedProtobuf(const meshtastic_MeshPac
                     // TODO: Send a message from the local queue
                 } else {
                     ("End of chain does not match!");
+
+                    // We just got an end of chain announce, checking if we have seen this message and have it in scratch.
                     if (isInScratch(t->message_hash.bytes)) {
-
-                        commit_hash.reset();
-
-                        if (getChainEnd(router->p_encrypted->channel, last_commit_hash, last_message_hash)) {
-                            printBytes("last message: 0x", last_commit_hash, 32);
-                            commit_hash.update(last_commit_hash, 32);
-                        } else {
-                            printBytes("new chain root: 0x", t->root_hash.bytes, 32);
-                            commit_hash.update(t->root_hash.bytes, 32);
-                        }
-
-                        commit_hash.update(t->message_hash.bytes, 32);
-                        // message_hash.update(&mp.rx_time, sizeof(mp.rx_time));
-                        commit_hash.finalize(commit_hash_bytes, 32);
-
+                        link_object scratch_object = getFromScratch(t->message_hash.bytes, t->message_hash.size);
                         // if this matches, we don't need to request the message
                         // we know exactly what it is
-                        if (memcmp(commit_hash_bytes, t->commit_hash.bytes, 32) == 0) {
-                            link_object scratch_object = getFromScratch(t->message_hash.bytes, 32);
+                        if (checkCommitHash(scratch_object, t->commit_hash.bytes, t->message_hash.size)) {
                             scratch_object.has_commit_hash = true;
-                            memcpy(scratch_object.commit_hash, commit_hash_bytes, 32);
+                            memcpy(scratch_object.commit_hash, t->commit_hash.bytes, 32);
 
                             addToChain(scratch_object);
                             removeFromScratch(t->message_hash.bytes);
@@ -345,20 +327,6 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
         return ProcessMessage::CONTINUE;
     }
 
-    // the sender+destination pair is an interesting unique id (though ordering) (smaller one goes first?)
-    // so messages with a unique pair become a chain
-    // These get a table
-
-    // message to broadcast get a chain per channel hash
-    // second table
-    // for now, channel messages are limited to decryptable
-    // limited to text messages
-
-    // create a unique-from-nodenums() class that returns a 64-bit value
-
-    SHA256 commit_hash;
-    uint8_t commit_hash_bytes[32] = {0};
-
     // For the moment, this is strictly LoRa
     if (mp.transport_mechanism != meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA) {
         return ProcessMessage::CONTINUE; // Let others look at this message also if they want
@@ -371,9 +339,6 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
     LOG_WARN("in handleReceived");
     if (mp.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP && mp.to == NODENUM_BROADCAST) {
         link_object lo = ingestTextPacket(mp, router->p_encrypted);
-
-        // do not include rxtime in the message hash. We want these to match when more then one node receives and compares notes.
-        // maybe include it in the commit hash
 
         if (isInDB(lo.message_hash)) {
             LOG_WARN("found message in db");
@@ -392,45 +357,16 @@ ProcessMessage StoreForwardPlusPlusModule::handleReceived(const meshtastic_MeshP
             }
             return ProcessMessage::CONTINUE;
         }
-
-        uint8_t last_message_hash[32] = {0};
-        uint8_t last_commit_hash[32] = {0};
-
-        commit_hash.reset();
-
-        if (getChainEnd(router->p_encrypted->channel, last_commit_hash, last_message_hash)) {
-            printBytes("last message: 0x", last_commit_hash, 32);
-            commit_hash.update(last_commit_hash, 32);
-        } else {
-            printBytes("new chain root: 0x", lo.root_hash, 32);
-            commit_hash.update(lo.root_hash, 32);
-        }
-
-        commit_hash.update(lo.message_hash, 32);
-        // message_hash.update(&mp.rx_time, sizeof(mp.rx_time));
-        commit_hash.finalize(commit_hash_bytes, 32);
-
-        // select HEX(commit_hash),HEX(channel_hash), payload, destination from channel_messages order by rowid desc;
-
-        // push a message into the local chain DB
-
-        // next, the stratum n+1 node needs to tuck messages away and attempt to update stratum 0
-
-        addToChain(mp.to, mp.from, mp.id, router->p_encrypted->channel, router->p_encrypted->encrypted.bytes,
-                   router->p_encrypted->encrypted.size, lo.message_hash, commit_hash_bytes, lo.root_hash, mp.rx_time,
-                   (char *)mp.decoded.payload.bytes, mp.decoded.payload.size);
+        addToChain(lo);
 
         // TODO: Limit to 25% bandwidth
-        canonAnnounce(lo.message_hash, commit_hash_bytes, lo.root_hash, lo.rx_time);
+        canonAnnounce(lo.message_hash, lo.commit_hash, lo.root_hash, lo.rx_time);
         return ProcessMessage::CONTINUE; // Let others look at this message also if they want
-
-        // one of the command messages
     } else if (mp.decoded.portnum == meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP) {
         LOG_WARN("Got a STORE_FORWARD++ packet");
         meshtastic_StoreForwardPlusPlus scratch;
         pb_decode_from_bytes(mp.decoded.payload.bytes, mp.decoded.payload.size, meshtastic_StoreForwardPlusPlus_fields, &scratch);
         handleReceivedProtobuf(mp, &scratch);
-        // when we get an update this way, if the message isn't on the chain, this node hasn't seen it, and can rebroadcast.
         return ProcessMessage::CONTINUE;
     }
     return ProcessMessage::CONTINUE;
@@ -766,42 +702,6 @@ bool StoreForwardPlusPlusModule::addToChain(link_object &lo)
     return true;
 }
 
-bool StoreForwardPlusPlusModule::addToChain(uint32_t to, uint32_t from, uint32_t id, ChannelHash channel_hash,
-                                            uint8_t *encrypted_bytes, size_t encrypted_len, uint8_t *_message_hash,
-                                            uint8_t *_commit_hash, uint8_t *_root_hash, uint32_t _rx_time, char *payload_bytes,
-                                            size_t payload_len)
-
-{
-    LOG_WARN("Add to chain");
-    // TODO: Make a data structure for this data
-
-    // push a message into the local chain DB
-    // destination
-    sqlite3_bind_int(chain_insert_stmt, 1, to);
-    // sender
-    sqlite3_bind_int(chain_insert_stmt, 2, from);
-    // packet_id
-    sqlite3_bind_int(chain_insert_stmt, 3, id);
-    // root_hash
-    sqlite3_bind_blob(chain_insert_stmt, 4, _root_hash, 32, NULL);
-    // encrypted_bytes
-    sqlite3_bind_blob(chain_insert_stmt, 5, encrypted_bytes, encrypted_len, NULL);
-
-    // message_hash
-    sqlite3_bind_blob(chain_insert_stmt, 6, _message_hash, 32, NULL);
-    // rx_time
-    sqlite3_bind_int(chain_insert_stmt, 7, _rx_time);
-
-    // commit_hash
-    sqlite3_bind_blob(chain_insert_stmt, 8, _commit_hash, 32, NULL);
-    // payload
-    sqlite3_bind_text(chain_insert_stmt, 9, payload_bytes, payload_len, NULL);
-
-    sqlite3_step(chain_insert_stmt);
-    sqlite3_reset(chain_insert_stmt);
-    return true;
-}
-
 bool StoreForwardPlusPlusModule::addToScratch(link_object &lo)
 {
     // TODO: Make a data structure for this data
@@ -999,6 +899,32 @@ void StoreForwardPlusPlusModule::rebroadcastLinkObject(StoreForwardPlusPlusModul
     service->sendToMesh(p, RX_SRC_RADIO, true);                                       // Send to mesh, cc to phone
 }
 
+bool StoreForwardPlusPlusModule::checkCommitHash(StoreForwardPlusPlusModule::link_object &lo, uint8_t *commit_hash_bytes,
+                                                 size_t hash_len)
+{
+    SHA256 commit_hash;
+    uint8_t last_message_hash[32] = {0};
+    uint8_t last_commit_hash[32] = {0};
+
+    commit_hash.reset();
+
+    if (getChainEnd(lo.channel_hash, last_commit_hash, last_message_hash)) {
+        printBytes("last message: 0x", last_commit_hash, 32);
+        commit_hash.update(last_commit_hash, 32);
+    } else {
+        printBytes("new chain root: 0x", lo.root_hash, 32);
+        commit_hash.update(lo.root_hash, 32);
+    }
+
+    commit_hash.update(lo.message_hash, 32);
+    commit_hash.finalize(commit_hash_bytes, 32);
+
+    if (memcmp(commit_hash_bytes, lo.commit_hash, 32) == 0) {
+        return true;
+    }
+    return false;
+}
+
 // announce latest hash
 // chain_end_announce
 
@@ -1041,3 +967,14 @@ void StoreForwardPlusPlusModule::rebroadcastLinkObject(StoreForwardPlusPlusModul
 // stratum
 // chain
 // links on the chain
+
+// the sender+destination pair is an interesting unique id (though ordering) (smaller one goes first?)
+// so messages with a unique pair become a chain
+// These get a table
+
+// message to broadcast get a chain per channel hash
+// second table
+// for now, channel messages are limited to decryptable
+// limited to text messages
+
+// create a unique-from-nodenums() class that returns a 64-bit value
