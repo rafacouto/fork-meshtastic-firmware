@@ -169,6 +169,9 @@ extern struct portduino_config_struct {
     int configDisplayMode = 0;
     bool has_configDisplayMode = false;
 
+    // Store and Forward++
+    bool sfpp_stratum0 = false;
+
     // General
     std::string mac_address = "";
     bool mac_address_explicit = false;
