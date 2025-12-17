@@ -852,7 +852,7 @@ StoreForwardPlusPlusModule::ingestTextPacket(const meshtastic_MeshPacket &mp, co
     message_hash.update(&mp.id, sizeof(mp.id));
     message_hash.finalize(lo.message_hash, 32);
 
-    getOrAddRootFromChannelHash(encrypted_meshpacket->channel, lo.message_hash);
+    getOrAddRootFromChannelHash(encrypted_meshpacket->channel, lo.root_hash);
     return lo;
 }
 
