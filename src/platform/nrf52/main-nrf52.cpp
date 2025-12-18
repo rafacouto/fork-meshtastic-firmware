@@ -253,6 +253,14 @@ void nrf52Setup()
     // This is the recommended setting for Monitor Mode Debugging
     NVIC_SetPriority(DebugMonitor_IRQn, 6UL);
 
+#ifdef MESHTASTIC_NRF52_ENABLE_BROWNOUT_RESET
+    // Configure hardware brownout reset (automatic reset when VCC < 2.7V)
+    // This works independently of SoftDevice
+    NRF_POWER->POFCON = (POWER_POFCON_POF_Enabled << POWER_POFCON_POF_Pos) |
+                        (POWER_POFCON_THRESHOLD_V27 << POWER_POFCON_THRESHOLD_Pos);
+    LOG_INFO("Hardware brownout reset enabled at 2.7V");
+#endif
+
 #ifdef BQ25703A_ADDR
     auto *bq = new BQ25713();
     if (!bq->setup())
